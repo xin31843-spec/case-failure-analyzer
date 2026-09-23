@@ -1,0 +1,12 @@
+name: Case-Failure-Analyzer
+description: >
+  Analyze failed scientific-computing benchmark cases from job artifacts,
+  agent trajectories, task definitions, and verifier code; attribute failures
+  to case specification, infrastructure, agent behavior, scientific decisions,
+  verifier defects, or numerical nondeterminism.
+version: "1.0.0"
+entrypoint: scripts/analyze_case.py
+capabilities:
+  read_only_default: true
+  supports_atif_version: "ATIF-v1.7"
+  output_schema: "failure-analysis-v1"
