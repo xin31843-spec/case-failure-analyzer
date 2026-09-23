@@ -24,8 +24,15 @@ AdapterEntry = Tuple[str, str, List[str], re.Pattern[str], List[str], List[str]]
 
 def load_error_family_registry(registry_path: Path = REGISTRY_PATH) -> Dict[str, Dict[str, Any]]:
     if not registry_path.is_file():
-        return {}
-    return json.loads(registry_path.read_text(encoding="utf-8"))
+        raise FileNotFoundError(
+            f"Scientific error family registry not found: {registry_path}"
+        )
+    data = json.loads(registry_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not data:
+        raise ValueError(
+            f"Scientific error family registry must be a non-empty JSON object: {registry_path}"
+        )
+    return data
 
 
 def build_scientific_adapters(
@@ -34,18 +41,33 @@ def build_scientific_adapters(
     reg = load_error_family_registry(registry_path)
     adapters: List[AdapterEntry] = []
     for software, families in reg.items():
+        if not isinstance(families, dict):
+            raise ValueError(f"Invalid family mapping for software {software!r} in {registry_path}")
         for family_name, spec in families.items():
-            if spec.get("status") != "implemented":
+            if not isinstance(spec, dict):
+                raise ValueError(f"Invalid family spec for {software}.{family_name} in {registry_path}")
+            status = spec.get("status")
+            if status not in ("implemented", "planned"):
+                raise ValueError(
+                    f"Invalid status {status!r} for {software}.{family_name} in {registry_path}"
+                )
+            if status != "implemented":
                 continue
             patterns = spec.get("patterns") or []
             if not patterns:
-                continue
+                raise ValueError(
+                    f"Implemented error family {software}.{family_name} has no regex patterns in {registry_path}"
+                )
             combined = "(?:" + "|".join(patterns) + ")"
             compiled = re.compile(combined, re.IGNORECASE)
             aliases = spec.get("aliases") or []
             causes = spec.get("candidate_causes") or []
             req_ev = spec.get("required_discriminating_evidence") or []
             adapters.append((software, family_name, aliases, compiled, causes, req_ev))
+    if not adapters:
+        raise RuntimeError(
+            f"Zero implemented scientific error adapters loaded from {registry_path}"
+        )
     return adapters
 
 

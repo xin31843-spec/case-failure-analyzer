@@ -162,13 +162,15 @@ def extract_runtime_errors(
     trial_res: Dict[str, Any] = {}
     if trial_res_path and trial_res_path.is_file():
         try:
-            trial_res = json.loads(trial_res_path.read_text(encoding="utf-8", errors="replace"))
+            loaded_trial = json.loads(trial_res_path.read_text(encoding="utf-8", errors="replace"))
+            trial_res = loaded_trial if isinstance(loaded_trial, dict) else {}
         except Exception:
             trial_res = {}
     job_res: Dict[str, Any] = {}
     if job_res_path.is_file():
         try:
-            job_res = json.loads(job_res_path.read_text(encoding="utf-8", errors="replace"))
+            loaded_job = json.loads(job_res_path.read_text(encoding="utf-8", errors="replace"))
+            job_res = loaded_job if isinstance(loaded_job, dict) else {}
         except Exception:
             job_res = {}
 
@@ -180,14 +182,8 @@ def extract_runtime_errors(
     agent_started = bool(rt_state["agent_started"])
     verifier_started = bool(rt_state["verifier_started"])
     exc_info = trial_res.get("exception_info")
-    # Only consider job_res stats if trial_dir is None (job-level abort before trial creation)
-    job_level_abort = bool(
-        trial_dir is None
-        and ((job_res.get("stats") or {}).get("n_errored_trials", 0) > 0)
-    )
     has_unrecovered_runner_failure = bool(
         rt_state["has_trial_exception"]
-        or job_level_abort
         or not agent_started
     )
 

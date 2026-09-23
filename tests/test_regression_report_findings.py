@@ -345,6 +345,50 @@ class TestReportRegressionFindings(unittest.TestCase):
             _, an, _, _ = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
             self.assertEqual(an["primary_root_cause"]["category"], "case")
             self.assertTrue(any(cf["category"] == "verifier" for cf in an["contributing_factors"]))
+            # Verify candidate_hypotheses from generate_candidate_hypotheses were merged into competing_hypotheses
+            self.assertTrue(any(h["category"] == "verifier" for h in an["competing_hypotheses"]))
+
+    def test_16_non_dict_stats_in_extract_runtime_errors_does_not_crash(self) -> None:
+        """Residual #1: {'stats': 'x'} with trial_dir=None must not crash with AttributeError."""
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp) / "jobs" / "string-stats"
+            job_dir.mkdir(parents=True)
+            (job_dir / "result.json").write_text(
+                json.dumps({"stats": "x", "task_id": "string-id", "config": "string-cfg"}),
+                encoding="utf-8",
+            )
+            ext = extract_runtime_errors(job_dir=job_dir, trial_dir=None)
+            self.assertFalse(ext["agent_started"])
+            disc = discover_all(job_path=job_dir)
+            self.assertEqual(disc["trials"][0]["metadata"]["job_stats"]["n_errored_trials"], 0)
+
+    def test_17_error_family_registry_missing_or_empty_raises_explicit_error(self) -> None:
+        """Residual #4: Missing or empty error-families.json must raise explicit error instead of returning 0 adapters."""
+        from extract_scientific_errors import build_scientific_adapters, load_error_family_registry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_path = Path(tmp) / "nonexistent.json"
+            with self.assertRaises(FileNotFoundError):
+                load_error_family_registry(missing_path)
+            with self.assertRaises(FileNotFoundError):
+                build_scientific_adapters(missing_path)
+
+            empty_path = Path(tmp) / "empty.json"
+            empty_path.write_text("{}", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_error_family_registry(empty_path)
+
+    def test_18_confidence_is_pure_evidence_ratio_without_literal_overrides(self) -> None:
+        """Residual #3: compute_evidence_confidence uses normalized ratio (points / 6) and no literal overrides exist."""
+        from confidence import MAX_EVIDENCE_POINTS, compute_evidence_confidence
+
+        c0, _, s0 = compute_evidence_confidence(ruled_out=True)
+        self.assertEqual((c0, s0), (0.0, "low"))
+        c_pass, _, s_pass = compute_evidence_confidence(verdict_passed=True)
+        self.assertEqual((c_pass, s_pass), (1.0, "high"))
+        c3, _, s3 = compute_evidence_confidence(direct_causal_evidence=2, cross_source_corroboration=1)
+        self.assertEqual(c3, round(3 / MAX_EVIDENCE_POINTS, 2))
+        self.assertEqual(s3, "medium")
 
 
 if __name__ == "__main__":

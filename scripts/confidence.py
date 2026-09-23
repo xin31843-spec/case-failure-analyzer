@@ -11,6 +11,9 @@ from __future__ import annotations
 from typing import Any, Dict, Tuple
 
 
+MAX_EVIDENCE_POINTS = 6
+
+
 def compute_evidence_confidence(
     *,
     direct_causal_evidence: int = 0,
@@ -19,40 +22,40 @@ def compute_evidence_confidence(
     single_keyword_only: bool = False,
     missing_discriminating_evidence: int = 0,
     contradicting_evidence: int = 0,
+    verdict_passed: bool = False,
+    ruled_out: bool = False,
 ) -> Tuple[float, str, str]:
     """
-    Returns `(confidence, confidence_kind, evidence_strength)`:
+    Returns `(confidence, confidence_kind, evidence_strength)` computed directly
+    as the normalized ratio `net_evidence_points / MAX_EVIDENCE_POINTS`:
       - `confidence`: float in [0.0, 1.0]
       - `confidence_kind`: `"heuristic_evidence_score"`
       - `evidence_strength`: `"high"` | `"medium"` | `"low"`
     """
-    score = 0
-    if direct_causal_evidence >= 1:
-        score += 2
-    if direct_causal_evidence >= 2:
-        score += 1
-    if cross_source_corroboration >= 1:
-        score += 1
-    if counterfactual_supported:
-        score += 2
-    if single_keyword_only:
-        score -= 2
-    if missing_discriminating_evidence > 0:
-        score -= min(2, missing_discriminating_evidence)
-    if contradicting_evidence > 0:
-        score -= 2 * contradicting_evidence
+    if ruled_out:
+        return 0.0, "heuristic_evidence_score", "low"
+    if verdict_passed:
+        return 1.0, "heuristic_evidence_score", "high"
 
-    if score >= 3:
+    points = (
+        min(3, max(0, int(direct_causal_evidence)))
+        + (1 if int(cross_source_corroboration) >= 1 else 0)
+        + (2 if counterfactual_supported else 0)
+        - (1 if single_keyword_only else 0)
+        - min(2, max(0, int(missing_discriminating_evidence)))
+        - 2 * max(0, int(contradicting_evidence))
+    )
+    clamped = max(0, min(MAX_EVIDENCE_POINTS, points))
+    numeric = round(clamped / float(MAX_EVIDENCE_POINTS), 2)
+
+    if clamped >= 4:
         strength = "high"
-        numeric = min(0.96, 0.82 + 0.04 * (score - 3))
-    elif score >= 1:
+    elif clamped >= 2:
         strength = "medium"
-        numeric = 0.65 + 0.07 * (score - 1)
     else:
         strength = "low"
-        numeric = max(0.25, 0.40 + 0.05 * score)
 
-    return round(numeric, 2), "heuristic_evidence_score", strength
+    return numeric, "heuristic_evidence_score", strength
 
 
 def attach_confidence_metadata(
@@ -64,6 +67,8 @@ def attach_confidence_metadata(
     single_keyword_only: bool = False,
     missing_discriminating_evidence: int = 0,
     contradicting_evidence: int = 0,
+    verdict_passed: bool = False,
+    ruled_out: bool = False,
 ) -> Dict[str, Any]:
     conf, kind, strength = compute_evidence_confidence(
         direct_causal_evidence=direct_causal_evidence,
@@ -72,6 +77,8 @@ def attach_confidence_metadata(
         single_keyword_only=single_keyword_only,
         missing_discriminating_evidence=missing_discriminating_evidence,
         contradicting_evidence=contradicting_evidence,
+        verdict_passed=verdict_passed,
+        ruled_out=ruled_out,
     )
     target["confidence"] = conf
     target["confidence_kind"] = kind

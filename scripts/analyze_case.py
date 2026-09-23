@@ -106,6 +106,36 @@ def collect_case_evidence(
     return evidence, norm_traj, contract_res, cand_hyps
 
 
+def _reconcile_competing_hypotheses(
+    branch_hyps: List[Dict[str, Any]],
+    cand_hyps: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Merges branch-specific hypotheses with all candidate hypotheses produced by
+    `generate_candidate_hypotheses(evidence)` so every gate's `competing_hypotheses`
+    is driven by the unified candidate hypothesis set.
+    """
+    merged: List[Dict[str, Any]] = [dict(h) for h in (branch_hyps or [])]
+    seen_keys = {(h.get("category"), h.get("subtype")) for h in merged}
+    raw_candidates = (cand_hyps or {}).get("candidate_hypotheses") or []
+    for cand in raw_candidates:
+        if not isinstance(cand, dict):
+            continue
+        key = (cand.get("category"), cand.get("subtype"))
+        if key in seen_keys:
+            for existing in merged:
+                if (existing.get("category"), existing.get("subtype")) == key:
+                    merged_for = list(dict.fromkeys((existing.get("evidence_for") or []) + (cand.get("evidence_for") or [])))
+                    existing["evidence_for"] = merged_for
+                    break
+            continue
+        seen_keys.add(key)
+        cloned = dict(cand)
+        cloned["hypothesis_id"] = f"H{len(merged) + 1}"
+        merged.append(cloned)
+    return merged
+
+
 def build_causal_attribution(
     evidence: Dict[str, Any],
     norm_traj: Dict[str, Any],
@@ -114,7 +144,21 @@ def build_causal_attribution(
 ) -> Dict[str, Any]:
     if cand_hyps is None:
         cand_hyps = generate_candidate_hypotheses(evidence)
+    result = _build_raw_causal_attribution(evidence, norm_traj, contract_res, cand_hyps)
+    if result.get("verdict") != "passed":
+        result["competing_hypotheses"] = _reconcile_competing_hypotheses(
+            result.get("competing_hypotheses") or [],
+            cand_hyps,
+        )
+    return result
 
+
+def _build_raw_causal_attribution(
+    evidence: Dict[str, Any],
+    norm_traj: Dict[str, Any],
+    contract_res: Dict[str, Any],
+    cand_hyps: Dict[str, Any],
+) -> Dict[str, Any]:
     case_id = evidence.get("case_id", "unknown")
     trial_name = evidence.get("trial_name", case_id)
     runtime = evidence.get("runtime") or {}
@@ -140,10 +184,8 @@ def build_causal_attribution(
                 "code": "NONE",
                 "summary": "No failure occurred; trial completed and passed verification (reward >= 1.0).",
             },
-            direct_causal_evidence=2,
-            cross_source_corroboration=1,
+            verdict_passed=True,
         )
-        prc["confidence"] = 1.0
         return {
             "schema_version": "failure-analysis-v1",
             "case_id": case_id,
@@ -229,10 +271,8 @@ def build_causal_attribution(
                     "missing_evidence": ["agent/trajectory.json"],
                     "counterfactual_test": "N/A (agent never launched)",
                 },
-                direct_causal_evidence=0,
-                contradicting_evidence=2,
+                ruled_out=True,
             )
-            h2["confidence"] = 0.0
 
             return {
                 "schema_version": "failure-analysis-v1",
@@ -616,7 +656,7 @@ def build_causal_attribution(
                 "hypothesis_id": "H1",
                 "category": "numerical",
                 "subtype": "trajectory_divergence",
-                "claim": "Chaotic MD trajectory divergence across float accumulation while ensemble averages match.",
+                "claim": "Lyapunov-sensitive MD trajectory divergence across float accumulation while ensemble averages match.",
                 "evidence_for": ev_refs,
                 "evidence_against": [],
                 "missing_evidence": [],
@@ -650,7 +690,7 @@ def build_causal_attribution(
                 "status": "identified",
                 "event_ref": ev_refs[0],
                 "timestamp": runtime.get("finished_at"),
-                "summary": "Chaotic MD trajectory divergence while ensemble statistics remained consistent.",
+                "summary": "Lyapunov-sensitive MD trajectory divergence while ensemble statistics remained consistent.",
             },
             "failure_manifestation": {
                 "type": "numerical_trajectory_divergence",
@@ -664,13 +704,13 @@ def build_causal_attribution(
                 {
                     "hypothesis_id": "H2",
                     "category": "agent",
-                    "reason": "Agent used the requested parameters and ensemble averages matched reference tolerances; divergence is chaotic float sensitivity.",
+                    "reason": "Agent used the requested parameters and ensemble averages matched reference tolerances; divergence reflects finite-precision floating-point accumulation sensitivity.",
                 }
             ],
             "recommended_actions": [
                 {
                     "owner": "Verifier",
-                    "action": "Verify ensemble averages or conserved-quantity drift rather than chaotic late-step instantaneous values, or pin MPI/OMP thread counts.",
+                    "action": "Verify ensemble averages or conserved-quantity drift rather than late-step instantaneous values, or pin MPI/OMP thread counts.",
                 }
             ],
             "skill_prescription": None,
@@ -1043,25 +1083,12 @@ def main() -> None:
     parser.add_argument("--max-log-bytes", type=int, default=120000, help="Maximum bytes per log file read")
     parser.add_argument("--include-session-files", action="store_true", help="Include agent session files in inventory")
     parser.add_argument(
-        "--replay",
-        choices=["none", "verifier", "safe"],
-        default="none",
-        help="Replay mode (default: none; verifier/safe require isolated runtime support)",
-    )
-    parser.add_argument(
         "--format",
         choices=["json", "markdown", "both"],
         default="both",
         help="Output format (default: both)",
     )
     args = parser.parse_args()
-
-    if args.replay != "none":
-        print(
-            f"ERROR: Replay mode '{args.replay}' is not implemented for static task analysis.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
 
     # Fail fast on bad input paths instead of emitting a confident-but-meaningless report.
     if not args.job.exists():
@@ -1111,7 +1138,6 @@ def main() -> None:
                 inv,
                 job_dir=job_dir,
                 max_log_bytes=args.max_log_bytes,
-                replay_mode=args.replay,
             )
             cand_hyps = generate_candidate_hypotheses(ev)
             write_outputs(args.output, ev, an, rep, skill_md, cand_hyps=cand_hyps, fmt=args.format)
@@ -1134,7 +1160,6 @@ def main() -> None:
                     inv,
                     job_dir=job_dir,
                     max_log_bytes=args.max_log_bytes,
-                    replay_mode=args.replay,
                 )
                 cand_hyps = generate_candidate_hypotheses(ev)
                 write_outputs(t_out, ev, an, rep, skill_md, cand_hyps=cand_hyps, fmt=args.format)

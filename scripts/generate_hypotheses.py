@@ -169,13 +169,13 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         candidates.append(h)
         h_idx += 1
 
-    # 4. Numerical trajectory divergence hypothesis (distinguishing structured vs bare keyword)
+    # 4. Numerical trajectory divergence hypothesis (requiring quantitative metric mentions)
     has_structured_numerical = bool(
         re.search(r"(?:trajectory_rmsd\s*=\s*[\d.]+|instantaneous_position.*?>\s*[\d.]+)", fail_text, re.IGNORECASE)
         and re.search(r"(?:ensemble average matches|ensemble.*within tolerance|conserved.*matches)", fail_text, re.IGNORECASE)
     )
-    has_bare_numerical_kw = bool(
-        re.search(r"(?:trajectory_rmsd|instantaneous_position|chaotic|ensemble average)", fail_text, re.IGNORECASE)
+    has_partial_numerical_metric = bool(
+        re.search(r"(?:trajectory_rmsd|instantaneous_position|ensemble average)", fail_text, re.IGNORECASE)
     )
     if has_structured_numerical:
         ev_for = ["ver:fail_log"] if fail_log_obs else []
@@ -184,7 +184,7 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
             "category": "numerical",
             "subtype": "trajectory_divergence",
             "code": "NUMERICAL_TRAJECTORY_DIVERGENCE",
-            "claim": "Chaotic MD trajectory divergence across float/parallel accumulation while ensemble averages match.",
+            "claim": "Lyapunov-sensitive MD trajectory divergence across float/parallel accumulation while ensemble averages match.",
             "evidence_for": ev_for,
             "evidence_against": [],
             "missing_evidence": [],
@@ -193,14 +193,14 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         attach_confidence_metadata(h, direct_causal_evidence=2, cross_source_corroboration=1)
         candidates.append(h)
         h_idx += 1
-    elif has_bare_numerical_kw:
+    elif has_partial_numerical_metric:
         ev_for = ["ver:fail_log"] if fail_log_obs else []
         h = {
             "hypothesis_id": f"H{h_idx}",
             "category": "numerical",
             "subtype": "trajectory_divergence",
             "code": "NUMERICAL_TRAJECTORY_DIVERGENCE",
-            "claim": "Possible numerical divergence mentioned by keyword in verifier log, but lacking quantitative trajectory/ensemble comparison.",
+            "claim": "Partial trajectory or ensemble metric mentioned in verifier log without complete trajectory-vs-ensemble comparison.",
             "evidence_for": ev_for,
             "evidence_against": [],
             "missing_evidence": ["Quantitative trajectory RMSD vs ensemble average data", "RNG seed / thread comparison"],
@@ -208,9 +208,9 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         }
         attach_confidence_metadata(
             h,
-            direct_causal_evidence=0,
+            direct_causal_evidence=1,
             single_keyword_only=True,
-            missing_discriminating_evidence=2,
+            missing_discriminating_evidence=1,
         )
         candidates.append(h)
         h_idx += 1

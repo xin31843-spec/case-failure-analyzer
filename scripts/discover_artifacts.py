@@ -203,9 +203,12 @@ def build_trial_inventory(
         else None
     ) or {}
     if task_dir is None:
+        raw_task_id = trial_result.get("task_id")
+        raw_config = trial_result.get("config")
+        raw_config_task = raw_config.get("task") if isinstance(raw_config, dict) else None
         task_rel = (
-            trial_result.get("task_id", {}).get("path")
-            or trial_result.get("config", {}).get("task", {}).get("path")
+            (raw_task_id.get("path") if isinstance(raw_task_id, dict) else None)
+            or (raw_config_task.get("path") if isinstance(raw_config_task, dict) else None)
         )
         if task_rel:
             candidate = job_dir.parent.parent / task_rel

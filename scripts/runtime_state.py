@@ -44,6 +44,15 @@ def extract_trial_reward(
     return reward_val
 
 
+def _safe_int(val: Any) -> int:
+    if isinstance(val, bool):
+        return 0
+    try:
+        return int(val)
+    except Exception:
+        return 0
+
+
 def compute_runtime_state(
     job_result: Optional[Dict[str, Any]],
     trial_result: Optional[Dict[str, Any]],
@@ -94,11 +103,11 @@ def compute_runtime_state(
         or trial_res.get("verifier_result") is not None
     )
 
-    stats = job_res.get("stats") or {}
+    stats = job_res.get("stats")
     if not isinstance(stats, dict):
         stats = {}
     job_abort_without_trial_dir = bool(
-        trial_dir is None and stats.get("n_errored_trials", 0) > 0
+        trial_dir is None and _safe_int(stats.get("n_errored_trials", 0)) > 0
     )
 
     reward_val = extract_trial_reward(trial_res, trial_dir)
