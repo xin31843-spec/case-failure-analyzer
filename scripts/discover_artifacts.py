@@ -12,8 +12,15 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from runtime_state import compute_runtime_state
 
 
 def compute_sha256(path: Path, max_bytes: Optional[int] = None) -> str:
@@ -76,11 +83,23 @@ def is_trial_dir(path: Path) -> bool:
     """Determine if a directory is a trial directory inside a job."""
     if not path.is_dir() or path.name.startswith("."):
         return False
+    # A job directory containing job.log is a job root, not a single trial directory
+    if (path / "job.log").is_file():
+        return False
+    res = safe_load_json(path / "result.json")
+    # If result.json has job-level keys like stats or n_total_trials without trial_name, it's a job dir
+    if res and ("n_total_trials" in res or "stats" in res) and "trial_name" not in res:
+        return False
+    # If any immediate subdirectory has its own trial.log or trial_name in result.json, `path` is a job root
+    for child in path.iterdir():
+        if child.is_dir() and child.name not in ("agent", "verifier", "artifacts", "environment", "tests"):
+            child_res = safe_load_json(child / "result.json")
+            if (child / "trial.log").is_file() or (child_res and "trial_name" in child_res):
+                return False
+    if res and ("trial_name" in res or "agent_execution" in res):
+        return True
     trial_markers = ("trial.log", "agent", "verifier", "exception.txt")
     if any((path / m).exists() for m in trial_markers):
-        return True
-    res = safe_load_json(path / "result.json")
-    if res and ("trial_name" in res or "agent_execution" in res):
         return True
     return False
 
@@ -218,63 +237,13 @@ def build_trial_inventory(
                         make_artifact_entry(f"art:asset_{idx}", task_dir, rel, "task")
                     )
 
-    # 5. Determine runtime status and stage gates
-    traj_exists = bool(
-        trial_dir and (trial_dir / "agent" / "trajectory.json").is_file()
+    # 5. Determine runtime status and stage gates via shared runtime_state module
+    rt_state = compute_runtime_state(
+        job_result=job_result,
+        trial_result=trial_result,
+        trial_dir=trial_dir,
     )
-    claude_txt_exists = bool(
-        trial_dir
-        and (trial_dir / "agent" / "claude-code.txt").is_file()
-        and (trial_dir / "agent" / "claude-code.txt").stat().st_size > 0
-    )
-    verify_log_exists = bool(
-        trial_dir and (trial_dir / "verifier" / "verify.log").is_file()
-    )
-    reward_txt_path = trial_dir / "verifier" / "reward.txt" if trial_dir else None
-    reward_val: Optional[float] = None
-    if reward_txt_path and reward_txt_path.is_file():
-        try:
-            reward_val = float(reward_txt_path.read_text(encoding="utf-8").strip())
-        except Exception:
-            reward_val = None
-    if reward_val is None:
-        vr = trial_result.get("verifier_result")
-        if isinstance(vr, dict) and isinstance(vr.get("rewards"), dict):
-            r = vr["rewards"].get("reward")
-            if isinstance(r, (int, float)):
-                reward_val = float(r)
-
-    agent_exec_stage = trial_result.get("agent_execution") or {}
-    verifier_stage = trial_result.get("verifier") or {}
-    env_setup_stage = trial_result.get("environment_setup") or {}
-    agent_setup_stage = trial_result.get("agent_setup") or {}
-
-    agent_started = bool(
-        traj_exists
-        or claude_txt_exists
-        or agent_exec_stage.get("started_at")
-        or trial_result.get("agent_result") is not None
-    )
-    verifier_started = bool(
-        verify_log_exists
-        or (reward_txt_path and reward_txt_path.is_file())
-        or verifier_stage.get("started_at")
-        or trial_result.get("verifier_result") is not None
-    )
-
-    exc_info = trial_result.get("exception_info")
-    n_errored = job_result.get("stats", {}).get("n_errored_trials", 0)
-
-    if exc_info is not None or n_errored > 0 or (
-        trial_dir and (trial_dir / "exception.txt").is_file()
-    ):
-        exit_status = "errored"
-    elif reward_val is not None and reward_val >= 1.0:
-        exit_status = "completed"
-    elif reward_val is not None and reward_val < 1.0:
-        exit_status = "failed"
-    else:
-        exit_status = "unknown"
+    job_stats = rt_state.pop("job_stats", {})
 
     case_id = (
         trial_result.get("task_name")
@@ -293,25 +262,10 @@ def build_trial_inventory(
         "trial_dir": str(trial_dir.resolve()) if trial_dir else None,
         "task_dir": str(task_dir.resolve()) if task_dir and task_dir.is_dir() else None,
         "artifacts": artifacts,
-        "runtime": {
-            "started_at": trial_result.get("started_at") or job_result.get("started_at"),
-            "finished_at": trial_result.get("finished_at") or job_result.get("finished_at"),
-            "exit_status": exit_status,
-            "reward": reward_val,
-            "agent_started": agent_started,
-            "verifier_started": verifier_started,
-            "stages": {
-                "environment_setup": env_setup_stage,
-                "agent_setup": agent_setup_stage,
-                "agent_execution": agent_exec_stage,
-                "verifier": verifier_stage,
-            },
-        },
+        "runtime": rt_state,
         "metadata": {
-            "job_result_summary": {
-                "n_total_trials": job_result.get("n_total_trials"),
-                "n_errored_trials": n_errored,
-            },
+            "job_stats": job_stats,
+            "job_result_summary": job_stats,
             "agent_info": trial_result.get("agent_info"),
             "task_toml": safe_load_toml(task_dir / "task.toml")
             if (task_dir and task_dir.is_dir())
@@ -359,6 +313,13 @@ def main() -> None:
     parser.add_argument("--include-session-files", action="store_true", help="Include agent session files")
     parser.add_argument("--output", required=True, type=Path, help="Output JSON file path")
     args = parser.parse_args()
+
+    if not args.job.exists():
+        print(f"ERROR: --job path does not exist: {args.job}", file=sys.stderr)
+        sys.exit(2)
+    if args.task is not None and not args.task.exists():
+        print(f"ERROR: --task path does not exist: {args.task}", file=sys.stderr)
+        sys.exit(2)
 
     result = discover_all(
         job_path=args.job,

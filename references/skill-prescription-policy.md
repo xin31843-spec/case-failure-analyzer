@@ -1,6 +1,6 @@
 # Skill Prescription Generation Policy
 
-`Case-Failure-Analyzer` optionally generates `skill-prescription.md` (and populates `analysis.json["skill_prescription"]`). To prevent polluting the agent's skill library with brittle workarounds or single-case patches, strict eligibility criteria apply.
+`case-failure-analyzer` optionally generates `skill-prescription.md` (and populates `analysis.json["skill_prescription"]`). To prevent polluting the agent's skill library with brittle workarounds or single-case patches, strict eligibility criteria apply.
 
 ## 1. Eligibility Gate (All Conditions Required)
 

@@ -12,8 +12,15 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from runtime_state import compute_runtime_state
 
 
 INFRA_RULES: List[Tuple[str, str, str, re.Pattern[str]]] = [
@@ -165,21 +172,22 @@ def extract_runtime_errors(
         except Exception:
             job_res = {}
 
-    agent_started = bool(
-        (trial_dir and (trial_dir / "agent" / "trajectory.json").is_file())
-        or (trial_res.get("agent_execution") or {}).get("started_at")
-        or trial_res.get("agent_result") is not None
+    rt_state = compute_runtime_state(
+        job_result=job_res,
+        trial_result=trial_res,
+        trial_dir=trial_dir,
     )
-    verifier_started = bool(
-        (trial_dir and (trial_dir / "verifier" / "verify.log").is_file())
-        or (trial_res.get("verifier") or {}).get("started_at")
-        or trial_res.get("verifier_result") is not None
-    )
+    agent_started = bool(rt_state["agent_started"])
+    verifier_started = bool(rt_state["verifier_started"])
     exc_info = trial_res.get("exception_info")
+    # Only consider job_res stats if trial_dir is None (job-level abort before trial creation)
+    job_level_abort = bool(
+        trial_dir is None
+        and ((job_res.get("stats") or {}).get("n_errored_trials", 0) > 0)
+    )
     has_unrecovered_runner_failure = bool(
-        exc_info is not None
-        or (trial_dir and (trial_dir / "exception.txt").is_file())
-        or (job_res.get("stats") or {}).get("n_errored_trials", 0) > 0
+        rt_state["has_trial_exception"]
+        or job_level_abort
         or not agent_started
     )
 

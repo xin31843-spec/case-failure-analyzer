@@ -1,5 +1,12 @@
 .DS_Store
 __pycache__/
 *.py[cod]
-*$py.class
 .pytest_cache/
+failure-analysis/
+
+# Generated analysis artifacts (never commit analyzer output)
+report.md
+report.zh.md
+report.en.md
+skill-prescription.md
+job_summary.json

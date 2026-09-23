@@ -1,6 +1,6 @@
 # Failure Taxonomy (`failure-analysis-v1`)
 
-This document defines the standardized classification hierarchy for `Case-Failure-Analyzer`. Every `analysis.json` must assign a `failure_stage`, a `detection_stage`, and a `primary_root_cause` (`category`, `subtype`, `code`).
+This document defines the standardized classification hierarchy for `case-failure-analyzer`. Every `analysis.json` must assign a `failure_stage`, a `detection_stage`, and a `primary_root_cause` (`category`, `subtype`, `code`).
 
 ## 1. Execution & Detection Stages
 

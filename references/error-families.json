@@ -1,0 +1,693 @@
+{
+  "cp2k": {
+    "basis_or_potential_missing": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "basis_or_potential_missing",
+      "patterns": [
+        "The specified OLD file <.*?> cannot be opened",
+        "cannot find basis set",
+        "BASIS_MOLOPT.*cannot be opened",
+        "GTH_POTENTIALS.*cannot be opened"
+      ],
+      "candidate_causes": [
+        "missing_symlink_to_cp2k_data",
+        "wrong_filename_in_input",
+        "container_missing_cp2k_data_dir",
+        "unmatched_kind_basis_name"
+      ],
+      "required_discriminating_evidence": [
+        "`/opt/cp2k/data/` directory contents",
+        "Agent `cp` or `ln -s` command history",
+        "`BASIS_SET_FILE_NAME` and `POTENTIAL_FILE_NAME` in `.inp`"
+      ]
+    },
+    "scf_nonconvergence": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "scf_nonconvergence",
+      "patterns": [
+        "SCF run NOT converged",
+        "Leaving inner SCF loop.*not converged"
+      ],
+      "candidate_causes": [
+        "bad_initial_guess",
+        "insufficient_scf_iterations",
+        "inappropriate_mixing_or_ot",
+        "invalid_geometry_overlap",
+        "metallic_system_without_smearing"
+      ],
+      "required_discriminating_evidence": [
+        "SCF iteration history",
+        "geometry sanity",
+        "MAX_SCF setting",
+        "process exit reason"
+      ]
+    },
+    "cholesky_or_overlap_failure": {
+      "status": "implemented",
+      "aliases": ["cholesky_decomposition_failure"],
+      "reference_anchor": "cholesky_or_overlap_failure",
+      "patterns": [
+        "Cholesky decomposition failed",
+        "dbcsr_cholesky_decompose",
+        "matrix is not positive definite"
+      ],
+      "candidate_causes": [
+        "overlapping_atoms_in_coord",
+        "diffuse_basis_linear_dependency",
+        "wrong_cell_dimensions",
+        "corrupt_asset_geometry"
+      ],
+      "required_discriminating_evidence": [
+        "Minimum interatomic distance in `&COORD`",
+        "`&CELL ABC` and `PERIODIC` settings",
+        "`EPS_PGF_ORB` setting"
+      ]
+    },
+    "geoopt_or_cellopt_nonconvergence": {
+      "status": "implemented",
+      "aliases": ["geoopt_not_converged"],
+      "reference_anchor": "geoopt_or_cellopt_nonconvergence",
+      "patterns": [
+        "MAXIMUM NUMBER OF OPTIMIZATION STEPS REACHED",
+        "Geometry optimization NOT converged"
+      ],
+      "candidate_causes": [
+        "insufficient_max_iter",
+        "noisy_forces_low_cutoff",
+        "unphysical_initial_structure",
+        "wrong_optimizer_choice"
+      ],
+      "required_discriminating_evidence": [
+        "`MAX_ITER` and `MAX_FORCE` settings",
+        "Force progression across optimization steps"
+      ]
+    },
+    "md_abnormal_termination": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "md_abnormal_termination",
+      "patterns": [
+        "Temperature out of range",
+        "Cons Qty.*explosion"
+      ],
+      "candidate_causes": [
+        "excessive_timestep",
+        "unconverged_scf_forces",
+        "missing_thermostat_or_wrong_ensemble",
+        "process_timeout_kill"
+      ],
+      "required_discriminating_evidence": [
+        "Compare `TIMESTEP` against light-atom vibrations",
+        "`.ener` step count vs `STEPS`",
+        "`PROGRAM ENDED AT` footer"
+      ]
+    },
+    "periodicity_poisson_mismatch": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "periodicity_poisson_mismatch",
+      "patterns": [
+        "Incompatible CELL%PERIODIC and POISSON%PERIODIC",
+        "Poisson solver.*PERIODIC NONE"
+      ],
+      "candidate_causes": [
+        "Incompatible CELL%PERIODIC and POISSON%PERIODIC",
+        "box_too_small_for_mt_solver"
+      ],
+      "required_discriminating_evidence": [
+        "Compare `&CELL PERIODIC` and `&POISSON PERIODIC` / `POISSON_SOLVER`"
+      ]
+    },
+    "input_parser_error": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "input_parser_error",
+      "patterns": [
+        "found an unknown keyword",
+        "unknown subsection",
+        "CPASSERT failed"
+      ],
+      "candidate_causes": [
+        "agent_syntax_error_in_inp",
+        "cp2k_version_keyword_deprecation",
+        "corrupt_provided_inp"
+      ],
+      "required_discriminating_evidence": [
+        "CP2K parser error line number",
+        "Diff between `/workspace/assets/*.inp` and executed `.inp`"
+      ]
+    },
+    "mpi_or_runtime_crash": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "mpi_or_runtime_crash",
+      "patterns": [
+        "MPI_Abort",
+        "cp2k.*Segmentation fault"
+      ],
+      "candidate_causes": [
+        "container_oom",
+        "oversubscribed_mpi_ranks",
+        "stack_size_limit"
+      ],
+      "required_discriminating_evidence": [
+        "Check `mpirun -np` count vs container CPU/RAM limits",
+        "Kernel/stderr exit code"
+      ]
+    }
+  },
+  "quantum-espresso": {
+    "scf_convergence_not_achieved": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "scf_convergence_not_achieved",
+      "patterns": [
+        "convergence NOT achieved after \\d+ iterations"
+      ],
+      "candidate_causes": [
+        "insufficient_electron_maxstep",
+        "high_mixing_beta",
+        "metallic_state_without_smearing",
+        "bad_crystal_geometry"
+      ],
+      "required_discriminating_evidence": [
+        "`electron_maxstep` and `mixing_beta` in `&ELECTRONS`",
+        "`occupations` and `degauss` in `&SYSTEM`",
+        "SCF accuracy progression per iteration"
+      ]
+    },
+    "c_bands_or_diagonalization_failure": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "c_bands_or_diagonalization_failure",
+      "patterns": [
+        "c_bands:.*eigenvalues not converged",
+        "S matrix not positive definite",
+        "davcio"
+      ],
+      "candidate_causes": [
+        "overlapping_atomic_positions",
+        "bad_pseudopotential_choice",
+        "wrong_celldm_or_units",
+        "insufficient_ecutwfc"
+      ],
+      "required_discriminating_evidence": [
+        "`ATOMIC_POSITIONS` unit card (`alat` vs `angstrom` vs `crystal`)",
+        "`CELL_PARAMETERS` / `celldm(1)`",
+        "`outdir` and `prefix` consistency"
+      ]
+    },
+    "charge_or_electron_count_error": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "charge_or_electron_count_error",
+      "patterns": [
+        "charge is wrong",
+        "odd number of electrons.*smearing"
+      ],
+      "candidate_causes": [
+        "wrong_tot_charge",
+        "missing_nspin_for_open_shell",
+        "wrong_nbnd"
+      ],
+      "required_discriminating_evidence": [
+        "Compare valence electrons from UPF pseudopotentials against `nbnd`, `tot_charge`, and `nspin`"
+      ]
+    },
+    "pseudopotential_read_failure": {
+      "status": "implemented",
+      "aliases": ["pseudopotential_mismatch_or_missing"],
+      "reference_anchor": "pseudopotential_read_failure",
+      "patterns": [
+        "Error in routine readpp",
+        "file .*\\.upf not found",
+        "wrong charge"
+      ],
+      "candidate_causes": [
+        "wrong_pseudo_dir",
+        "missing_upf_file_in_assets",
+        "corrupt_upf_header"
+      ],
+      "required_discriminating_evidence": [
+        "`pseudo_dir` in `&CONTROL`",
+        "Contents of `/workspace/assets/` and `/opt/qe/pseudo/`",
+        "`ATOMIC_SPECIES` card"
+      ]
+    },
+    "prefix_or_outdir_chain_mismatch": {
+      "status": "implemented",
+      "aliases": ["workflow_prefix_or_outdir_mismatch"],
+      "reference_anchor": "prefix_or_outdir_chain_mismatch",
+      "patterns": [
+        "outdir mismatch",
+        "prefix mismatch",
+        "pwscf\\.xml.*not found",
+        "cannot open xml data file"
+      ],
+      "candidate_causes": [
+        "different_prefix_or_outdir_across_steps",
+        "verifier_namelist_regex_slash_bug",
+        "scf_not_run_before_nscf_or_bands"
+      ],
+      "required_discriminating_evidence": [
+        "`prefix` and `outdir` in `si_scf.in`, `si_bands.in`, and `bandsx.in`",
+        "Whether `outdir/pwscf.xml` exists on disk",
+        "Verifier `parse_namelists` regex behavior on paths containing `/`"
+      ]
+    },
+    "ecut_or_kpoint_misconfiguration": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "ecut_or_kpoint_misconfiguration",
+      "patterns": [
+        "incompatible nr1, nr2, nr3",
+        "wrong k-points card"
+      ],
+      "candidate_causes": [
+        "ecutwfc_differs_from_prompt",
+        "wrong_kpoint_grid_or_crystal_b_path",
+        "dual_ecutrho_mismatch_for_uspp"
+      ],
+      "required_discriminating_evidence": [
+        "Compare `ecutwfc`, `ecutrho`, and `K_POINTS` card against `instruction.md`"
+      ]
+    }
+  },
+  "lammps": {
+    "lost_atoms": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "lost_atoms",
+      "patterns": [
+        "ERROR: Lost atoms",
+        "Lost atoms: original"
+      ],
+      "candidate_causes": [
+        "excessive_timestep",
+        "overlapping_initial_geometry",
+        "missing_energy_minimization",
+        "fixed_boundary_escape"
+      ],
+      "required_discriminating_evidence": [
+        "`timestep` and `units` settings",
+        "Initial potential energy and forces at step 0",
+        "`boundary` settings (`p p p` vs `f f f`)"
+      ]
+    },
+    "non_numeric_pressure_or_energy": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "non_numeric_pressure_or_energy",
+      "patterns": [
+        "Non-numeric pressure - simulation unstable",
+        "nan\\s+nan"
+      ],
+      "candidate_causes": [
+        "overlapping_atoms_in_data_file",
+        "wrong_pair_coeff_parameters",
+        "unstable_npt_barostat_damping"
+      ],
+      "required_discriminating_evidence": [
+        "Step 0 `PotEng` and `Press` values",
+        "`pair_style` and `pair_coeff` arguments",
+        "Interatomic distances in input `.data`"
+      ]
+    },
+    "bond_or_topology_missing": {
+      "status": "implemented",
+      "aliases": ["bond_atoms_missing"],
+      "reference_anchor": "bond_or_topology_missing",
+      "patterns": [
+        "Bond atoms .* missing on proc",
+        "Angle atoms .* missing",
+        "Dihedral atoms .* missing"
+      ],
+      "candidate_causes": [
+        "communication_cutoff_too_short",
+        "unstable_bond_stretching",
+        "bad_data_file_topology"
+      ],
+      "required_discriminating_evidence": [
+        "`comm_modify cutoff` and `neighbor` settings",
+        "`timestep` and `fix shake` / bond parameters"
+      ]
+    },
+    "atom_style_or_data_format_error": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "atom_style_or_data_format_error",
+      "patterns": [
+        "Incorrect atom format in data file",
+        "Unknown atom style",
+        "Invalid atom type in"
+      ],
+      "candidate_causes": [
+        "mismatch_between_atom_style_and_read_data_columns",
+        "missing_masses_or_header_counts"
+      ],
+      "required_discriminating_evidence": [
+        "Compare `atom_style` with column count in `Atoms` section of `.data`"
+      ]
+    },
+    "pair_coeff_or_potential_file_error": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "pair_coeff_or_potential_file_error",
+      "patterns": [
+        "Cannot open EAM potential file",
+        "Incorrect args for pair coefficients",
+        "All pair coeffs are not set"
+      ],
+      "candidate_causes": [
+        "wrong_potential_path",
+        "missing_element_mapping_in_eam_alloy",
+        "modified_pinned_asset"
+      ],
+      "required_discriminating_evidence": [
+        "Check `pair_style` and `pair_coeff` arguments and `/workspace/assets/` path"
+      ]
+    },
+    "neighbor_list_overflow": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "neighbor_list_overflow",
+      "patterns": [
+        "Neighbor list overflow, boost neigh_modify one"
+      ],
+      "candidate_causes": [
+        "collapsed_box_high_density",
+        "cutoff_larger_than_box",
+        "units_mismatch"
+      ],
+      "required_discriminating_evidence": [
+        "Check `pair_style` cutoff radius vs `units` and box density"
+      ]
+    },
+    "restart_or_timestep_continuation_mismatch": {
+      "status": "implemented",
+      "aliases": ["restart_continuation_divergence"],
+      "reference_anchor": "restart_or_timestep_continuation_mismatch",
+      "patterns": [
+        "Continuation must start at step",
+        "final_pe=.*differs from ref",
+        "first_pe=.*differs from ref"
+      ],
+      "candidate_causes": [
+        "agent_used_read_data_instead_of_read_restart",
+        "agent_called_reset_timestep",
+        "different_ensemble_or_fix_parameters_after_restart",
+        "wrong_timestep_or_pair_style_in_continuation"
+      ],
+      "required_discriminating_evidence": [
+        "Whether `read_restart` vs `read_data` was used in LAMMPS input",
+        "Whether `reset_timestep` or `velocity create` was called",
+        "`fix nve` / `fix nvt` parameters compared to `instruction.md`",
+        "Step 1000 `first_pe` match vs Step 3000 `final_pe` drift"
+      ]
+    },
+    "thermo_column_or_log_format_mismatch": {
+      "status": "implemented",
+      "aliases": ["thermo_column_or_ecoh_mismatch"],
+      "reference_anchor": "thermo_column_or_log_format_mismatch",
+      "patterns": [
+        "ecoh=.*!= log last line",
+        "Expected >=2 thermo lines"
+      ],
+      "candidate_causes": [
+        "verifier_implicit_thermo_column_index",
+        "agent_custom_thermo_style_order",
+        "multiple_runs_in_same_log_lammps"
+      ],
+      "required_discriminating_evidence": [
+        "`thermo_style` header line (`Step ...`) in `log.lammps`",
+        "Column index assumed by `tests/verify.py`",
+        "Whether `results.json` `ecoh` passed Layer 3 reference check"
+      ]
+    }
+  },
+  "xtb": {
+    "scc_nonconvergence": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "scc_nonconvergence",
+      "patterns": [
+        "convergence criteria cannot be satisfied",
+        "self consistent charge iterator did not converge"
+      ],
+      "candidate_causes": [
+        "wrong_charge_or_uhf",
+        "bad_input_geometry",
+        "insufficient_etemp_for_small_gap"
+      ],
+      "required_discriminating_evidence": [
+        "`--chrg` and `--uhf` CLI flags",
+        "Input `.xyz` structure sanity",
+        "`--etemp` / `--iterations` settings"
+      ]
+    },
+    "invalid_charge_or_multiplicity": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "invalid_charge_or_multiplicity",
+      "patterns": [
+        "Number of electrons and spin multiplicity do not match"
+      ],
+      "candidate_causes": [
+        "incompatible_chrg_and_uhf_flags",
+        "missing_hydrogen_atoms_in_structure"
+      ],
+      "required_discriminating_evidence": [
+        "Total electron count vs `--chrg` and `--uhf`"
+      ]
+    },
+    "geometry_read_failure": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "geometry_read_failure",
+      "patterns": [
+        "could not read geometry",
+        "invalid coordinate file"
+      ],
+      "candidate_causes": [
+        "malformed_xyz_header",
+        "wrong_file_format_passed_to_xtb"
+      ],
+      "required_discriminating_evidence": [
+        "Inspect line 1 (atom count), line 2 (comment), and coordinate lines of input file"
+      ]
+    },
+    "opt_or_hessian_failure": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "opt_or_hessian_failure",
+      "patterns": [
+        "ANCopt failed",
+        "hessian_evaluated_at_non_stationary_point"
+      ],
+      "candidate_causes": [
+        "tight_optimization_threshold_not_met",
+        "saddle_point_geometry"
+      ],
+      "required_discriminating_evidence": [
+        "Check `--opt` level and `xtbopt.xyz` usage before `--hess`"
+      ]
+    },
+    "abnormal_termination": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "abnormal_termination",
+      "patterns": [
+        "\\[ERROR\\] Program stopped due to fatal error",
+        "abnormal termination of xtb"
+      ],
+      "candidate_causes": [
+        "stack_overflow_omp_stacksize",
+        "unsupported_element_or_gfn_version"
+      ],
+      "required_discriminating_evidence": [
+        "Check `OMP_STACKSIZE`, `--gfn` version, and stderr traceback"
+      ]
+    }
+  },
+  "ase": {
+    "calculator_not_attached": {
+      "status": "implemented",
+      "aliases": ["calculator_or_property_error"],
+      "reference_anchor": "calculator_not_attached",
+      "patterns": [
+        "Atoms object has no calculator",
+        "PropertyNotImplementedError"
+      ],
+      "candidate_causes": [
+        "forgot_atoms_calc_assignment",
+        "copied_atoms_without_calculator",
+        "wrong_calculator_class"
+      ],
+      "required_discriminating_evidence": [
+        "`atoms.calc = ...` assignment in script",
+        "`atoms.copy()` calls before `get_potential_energy()`"
+      ]
+    },
+    "cell_or_pbc_inconsistency": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "cell_or_pbc_inconsistency",
+      "patterns": [
+        "ValueError: Cell must be non-singular",
+        "volume is zero"
+      ],
+      "candidate_causes": [
+        "missing_cell_on_periodic_system",
+        "vacuum_not_added_for_molecule_or_slab"
+      ],
+      "required_discriminating_evidence": [
+        "Inspect `atoms.get_cell()`, `atoms.get_pbc()`, and `atoms.center(vacuum=...)`"
+      ]
+    },
+    "optimizer_or_neb_nonconvergence": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "optimizer_or_neb_nonconvergence",
+      "patterns": [
+        "NEB.*not converged",
+        "fmax.*not reached",
+        "Maximum number of steps reached"
+      ],
+      "candidate_causes": [
+        "insufficient_steps",
+        "too_many_constraints_freezing_all_atoms",
+        "bad_neb_initial_interpolation"
+      ],
+      "required_discriminating_evidence": [
+        "`opt.run(fmax=..., steps=...)` arguments",
+        "`FixAtoms` constraint indices"
+      ]
+    },
+    "io_format_conversion_error": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "io_format_conversion_error",
+      "patterns": [
+        "UnknownFileTypeError",
+        "ase\\.io.*ValueError"
+      ],
+      "candidate_causes": [
+        "wrong_format_string",
+        "missing_velocities_or_charges_in_output_format",
+        "multi_frame_index_omitted"
+      ],
+      "required_discriminating_evidence": [
+        "Check `ase.io.read(path, index=':')` vs single frame `index=-1`"
+      ]
+    },
+    "vibrations_cache_or_mode_error": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "vibrations_cache_or_mode_error",
+      "patterns": [
+        "vib\\..*\\.json.*FileNotFoundError",
+        "Vibrations.*ZeroDivisionError"
+      ],
+      "candidate_causes": [
+        "stale_vib_cache_from_previous_geometry",
+        "vib_clean_not_called",
+        "wrong_indices_list"
+      ],
+      "required_discriminating_evidence": [
+        "Check whether `vib.clean()` was called after changing geometry or calculator"
+      ]
+    }
+  },
+  "rdkit": {
+    "smiles_parse_or_none_mol": {
+      "status": "implemented",
+      "aliases": ["smiles_or_sanitization_error"],
+      "reference_anchor": "smiles_parse_or_none_mol",
+      "patterns": [
+        "SMILES Parse Error",
+        "NoneType.*object has no attribute.*GetAtoms"
+      ],
+      "candidate_causes": [
+        "unhandled_none_from_molfromsmiles",
+        "malformed_smiles_line_in_batch",
+        "header_line_parsed_as_smiles"
+      ],
+      "required_discriminating_evidence": [
+        "Input SMILES string and `Chem.MolFromSmiles` null checks",
+        "Whether CSV/TSV header was skipped"
+      ]
+    },
+    "sanitization_or_valence_error": {
+      "status": "implemented",
+      "aliases": ["smiles_or_sanitization_error"],
+      "reference_anchor": "sanitization_or_valence_error",
+      "patterns": [
+        "Explicit valence for atom .* is greater than permitted",
+        "MolSanitizeException",
+        "KekulizeException"
+      ],
+      "candidate_causes": [
+        "incorrect_nitrogen_or_sulfur_valence_state",
+        "missing_charge_normalization",
+        "unescaped_aromatic_tautomer"
+      ],
+      "required_discriminating_evidence": [
+        "Check `rdMolStandardize.Normalizer` / `Cleanup` usage and `sanitize=False` handling"
+      ]
+    },
+    "conformer_embedding_failure": {
+      "status": "implemented",
+      "aliases": ["conformer_or_mmff_error"],
+      "reference_anchor": "conformer_embedding_failure",
+      "patterns": [
+        "Bad Conformer Id",
+        "EmbedMultipleConfs.*-1"
+      ],
+      "candidate_causes": [
+        "missing_explicit_hydrogens_addhs",
+        "strained_macrocycle_without_etkdg_random_coords",
+        "unseeded_random_seed"
+      ],
+      "required_discriminating_evidence": [
+        "Whether `Chem.AddHs(mol)` was called prior to `EmbedMultipleConfs`",
+        "`randomSeed` parameter in `ETKDGv3()`"
+      ]
+    },
+    "force_field_parameter_failure": {
+      "status": "implemented",
+      "aliases": ["conformer_or_mmff_error"],
+      "reference_anchor": "force_field_parameter_failure",
+      "patterns": [
+        "MMFFGetMoleculeProperties returned None",
+        "UFFHasAllAtomParams"
+      ],
+      "candidate_causes": [
+        "organometallic_or_unsupported_atom_in_mmff94",
+        "missing_uff_fallback",
+        "unminimized_conformer_energy"
+      ],
+      "required_discriminating_evidence": [
+        "Check `AllChem.MMFFHasAllMoleculeParams(mol)` and UFF fallback handling"
+      ]
+    },
+    "stereochemistry_or_canonicalization_mismatch": {
+      "status": "implemented",
+      "aliases": [],
+      "reference_anchor": "stereochemistry_or_canonicalization_mismatch",
+      "patterns": [
+        "isomericSmiles.*mismatch",
+        "TautomerEnumerator.*mismatch"
+      ],
+      "candidate_causes": [
+        "dropped_chiral_tags_during_standardization",
+        "wrong_canonical_tautomer_enumeration_order",
+        "salt_fragment_selection"
+      ],
+      "required_discriminating_evidence": [
+        "Compare `rdMolStandardize.LargestFragmentChooser`, `Uncharger`, and `TautomerEnumerator` call order"
+      ]
+    }
+  }
+}

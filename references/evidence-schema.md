@@ -1,8 +1,9 @@
-# Evidence & Analysis JSON Schemas (`failure-analysis-v1`)
+# Evidence & Analysis JSON Schemas (`failure-analysis-v1`) / 证据与归因 JSON 模式规范 (中英双版)
 
-## 1. `evidence.json` Schema
+## 1. `evidence.json` Schema / 客观证据模式
 
-`evidence.json` stores purely objective observations extracted by deterministic scripts. It must never contain subjective root-cause labels.
+`evidence.json` stores purely objective observations extracted by deterministic scripts (`discover_artifacts.py`, `runtime_state.py`, `normalize_trajectory.py`, `extract_runtime_errors.py`, `audit_contract.py`, `extract_scientific_errors.py`). It must never contain subjective root-cause labels.
+`evidence.json` 仅存储由确定性脚本提取的客观事实与观测，不包含任何主观根因裁决标签。
 
 ```json
 {
@@ -12,7 +13,7 @@
   "trial_name": "string",
   "artifacts": [
     {
-      "artifact_id": "art:result_json",
+      "artifact_id": "art:trial_result",
       "rel_path": "result.json",
       "scope": "trial|job|task",
       "exists": true,
@@ -23,10 +24,14 @@
   "runtime": {
     "started_at": "ISO-8601 or null",
     "finished_at": "ISO-8601 or null",
+    "execution_status": "completed|errored|not_started|unknown",
+    "verification_status": "passed|failed|not_run",
+    "verdict": "passed|failed|errored|unknown",
     "exit_status": "completed|failed|errored|unknown",
     "reward": 0.0,
     "agent_started": true,
     "verifier_started": true,
+    "state_conflicts": [],
     "stages": {
       "environment_setup": {"started_at": "...", "finished_at": "..."},
       "agent_setup": {"started_at": "...", "finished_at": "..."},
@@ -51,10 +56,10 @@
   ],
   "behavioral_signals": [
     {
-      "signal_id": "sig:1",
+      "signal_id": "sig:repeated_fail:2:0",
       "signal_type": "repeated_failed_action|ignored_error|missing_log_inspection|unverified_output|premature_completion|wrong_output_path|asset_modified|dependency_search_attempted|scientific_parameter_changed|fallback_attempted",
       "description": "string",
-      "event_ref": "trajectory:step:5"
+      "event_ref": "trajectory:step:2:tool:0"
     }
   ],
   "error_observations": [
@@ -76,20 +81,26 @@
       "item": "results.json",
       "prompt_requirement": "required",
       "verifier_requirement": "required",
-      "agent_output_status": "present_and_valid",
-      "alignment": "consistent|agent_mismatch|verifier_defect|contract_ambiguity",
+      "agent_output_status": "present",
+      "alignment": "consistent|agent_mismatch|verifier_defect|case_defect",
       "details": "string",
       "source_refs": ["task:instruction.md", "task:tests/verify.py"]
     }
   ],
   "verifier_observations": [
     {
-      "obs_id": "ver:1",
-      "type": "verifier_fail_message|parser_hazard|implicit_column_assumption|l4_recompute",
+      "obs_id": "ver:hazard:1",
+      "type": "verifier_fail_message|parser_hazard|implicit_column_assumption|verifier_internal_crash",
       "summary": "string",
       "matched_text": "string",
-      "source_file": "verifier/verify.log",
-      "source_pointer": "L1"
+      "hazard_detected": true,
+      "failure_binding": "direct|indirect|none",
+      "binding_evidence": ["ver:fail_log"],
+      "affected_input": "string or null",
+      "affected_parser": "string or null",
+      "triggered": true,
+      "source_file": "tests/verify.py",
+      "source_pointer": "AST"
     }
   ],
   "scientific_observations": [
@@ -97,6 +108,8 @@
       "sci_id": "sci:1",
       "software": "cp2k|quantum-espresso|lammps|xtb|ase|rdkit",
       "error_family": "scf_nonconvergence",
+      "aliases": [],
+      "reference_anchor": "references/software/cp2k.md#scf_nonconvergence",
       "matched_text": "string",
       "source_ref": "trajectory:step:8",
       "candidate_causes": ["bad_initial_guess", "insufficient_scf_iterations"],
@@ -111,9 +124,10 @@
 
 ---
 
-## 2. `analysis.json` Schema
+## 2. `analysis.json` Schema / 因果归因模式
 
 `analysis.json` stores the structured causal attribution and must pass `scripts/validate_analysis.py`.
+`analysis.json` 存储结构化因果归因结论，必须通过 `scripts/validate_analysis.py` 校验。
 
 ```json
 {
@@ -121,33 +135,28 @@
   "case_id": "cp2k-aimd-water",
   "trial_name": "cp2k-aimd-water__kGRrYBg",
   "verdict": "failed|errored|passed",
-  "failure_stage": "environment_build|environment_runtime|agent_setup|agent_execution|verifier_execution",
+  "failure_stage": "environment_build|environment_runtime|agent_setup|agent_execution|verifier_execution|none|unknown",
   "detection_stage": "runner|verifier_execution|agent_execution",
   "first_unrecovered_deviation": {
-    "event_ref": "err:1",
+    "status": "identified|not_identified",
+    "event_ref": "err:1 or null",
     "timestamp": "2026-09-18T21:45:37.672525",
     "summary": "Docker image pull/build failed during environment setup before agent startup"
   },
   "failure_manifestation": {
-    "type": "dependency_install_failure|verifier_check_failed|agent_timeout|...",
+    "type": "dependency_install_failure|verifier_check_failed|verifier_internal_crash|...",
     "summary": "Human-readable description of the final failure symptom"
   },
   "primary_root_cause": {
-    "category": "infra|case|agent|verifier|numerical|unknown",
+    "category": "infra|case|agent|verifier|numerical|unknown|none",
     "subtype": "external_network",
     "code": "INFRA_EXTERNAL_NETWORK",
-    "confidence": 0.98,
+    "confidence": 0.86,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "high|medium|low",
     "summary": "Explanation of why this is the singular primary root cause"
   },
-  "contributing_factors": [
-    {
-      "category": "case",
-      "subtype": "ambiguous_contract",
-      "code": "CASE_AMBIGUOUS_CONTRACT",
-      "confidence": 0.65,
-      "summary": "Optional secondary factor"
-    }
-  ],
+  "contributing_factors": [],
   "competing_hypotheses": [
     {
       "hypothesis_id": "H1",
@@ -158,10 +167,12 @@
       "evidence_against": [],
       "missing_evidence": [],
       "counterfactual_test": "Pre-pull image or build with working network mirror",
-      "confidence": 0.98
+      "confidence": 0.86,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "high"
     }
   ],
-  "evidence_refs": ["err:1", "art:result_json"],
+  "evidence_refs": ["err:1", "art:trial_result"],
   "excluded_hypotheses": [
     {
       "hypothesis_id": "H2",

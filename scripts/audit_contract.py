@@ -66,7 +66,7 @@ def extract_prompt_contract(instruction_text: str, task_dir: Optional[Path]) -> 
 
     # 4. Check whether `thermo_style` column order is explicitly specified
     specifies_thermo_columns = bool(
-        re.search(r"thermo_style\s+custom\s+step\s+pe\s+lx", instruction_text, re.IGNORECASE)
+        re.search(r"thermo_style\s+custom\s+\S+", instruction_text, re.IGNORECASE)
     )
 
     return {
@@ -84,9 +84,11 @@ class VerifierASTVisitor(ast.NodeVisitor):
         self.checked_keys: List[str] = []
         self.regex_patterns: List[str] = []
         self.fail_messages: List[str] = []
+        self.split_vars: Set[str] = set()
+        self.has_positional_split_index: bool = False
+        self.indexed_split_snippets: List[str] = []
 
     def visit_Call(self, node: ast.Call) -> Any:
-        # Detect os.path.isfile(...) or os.path.join(WORKSPACE, "...")
         func_name = ""
         if isinstance(node.func, ast.Attribute):
             func_name = node.func.attr
@@ -118,8 +120,23 @@ class VerifierASTVisitor(ast.NodeVisitor):
 
         self.generic_visit(node)
 
+    def visit_Subscript(self, node: ast.Subscript) -> Any:
+        # Detect `<expr>.split()[<int>]` or `<split_var>[<int>]`
+        is_int_index = isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, int)
+        if is_int_index:
+            if (
+                isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "split"
+            ):
+                self.has_positional_split_index = True
+                self.indexed_split_snippets.append(f"split()[{node.slice.value}]")
+            elif isinstance(node.value, ast.Name) and node.value.id in self.split_vars:
+                self.has_positional_split_index = True
+                self.indexed_split_snippets.append(f"{node.value.id}[{node.slice.value}]")
+        self.generic_visit(node)
+
     def visit_For(self, node: ast.For) -> Any:
-        # Detect `for fname in ("a", "b"):` or `for key in ("k1", "k2"):`
         target_name = node.target.id if isinstance(node.target, ast.Name) else ""
         if isinstance(node.iter, (ast.Tuple, ast.List)):
             items = [
@@ -138,7 +155,14 @@ class VerifierASTVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> Any:
-        # Detect `KEYS = ("gamma_band4_eV", ...)`
+        if (
+            isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "split"
+        ):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    self.split_vars.add(t.id)
         for t in node.targets:
             if isinstance(t, ast.Name) and t.id in ("KEYS", "REQUIRED_KEYS"):
                 if isinstance(node.value, (ast.Tuple, ast.List)):
@@ -175,6 +199,7 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
             {
                 "hazard_type": "VERIFIER_REGEX_OR_PARSER_DEFECT",
                 "subtype": "namelist_slash_truncation",
+                "affected_parser": r"&(\w+)\b(.*?)/",
                 "description": (
                     "Verifier uses `re.finditer(r'&(\\w+)\\b(.*?)/', text, re.DOTALL)` to parse Fortran namelists; "
                     "any `/` inside quoted file paths (e.g. `pseudo_dir = '/workspace/assets'` or `outdir = './outdir'`) "
@@ -191,19 +216,26 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
                 {
                     "hazard_type": "VERIFIER_REGEX_OR_PARSER_DEFECT",
                     "subtype": "scientific_notation_missing_d_exponent",
+                    "affected_parser": pat,
                     "description": f"Verifier regex `{pat}` parses floating-point numbers without Fortran `D/d` exponent support.",
                 }
             )
 
-    # Hazard 3: Implicit positional thermo column indexing (`thermo[-1].split()`)
-    if "thermo[-1].split()" in code_text and "last_pe" in code_text:
+    # Hazard 3: Generic AST detection of positional `.split()` column indexing without header map
+    parses_header_map = bool(
+        re.search(r"\.index\(\s*['\"](?:PotEng|pe|Step|Temp|Lx)['\"]\s*\)", code_text, re.IGNORECASE)
+        or re.search(r"dict\(zip\(header", code_text, re.IGNORECASE)
+    )
+    if visitor.has_positional_split_index and not parses_header_map:
+        snippets = ", ".join(visitor.indexed_split_snippets[:3])
         hazards.append(
             {
                 "hazard_type": "VERIFIER_HIDDEN_CONTRACT",
                 "subtype": "implicit_thermo_column_index",
+                "affected_parser": snippets,
                 "description": (
-                    "Verifier indexes `thermo[-1].split()[1]` assuming column 1 is `PotEng` (`pe`) and column 2 is `lx` "
-                    "without parsing the `Step ...` thermo header column names."
+                    f"Verifier indexes positional `.split()` columns (`{snippets}`) "
+                    "without mapping `Step ...` header column names."
                 ),
             }
         )
@@ -322,7 +354,7 @@ def audit_contract(
         )
         cid += 1
 
-    # 4. Record Verifier failure message & correlate with hazards
+    # 4. Record Verifier failure message, detect verifier internal crash, & correlate with hazards
     if verify_log_text:
         verifier_observations.append(
             {
@@ -335,13 +367,49 @@ def audit_contract(
             }
         )
 
+        # Check if verifier crashed internally (e.g. missing verifier temp/ref file `/tmp/...`, `/tests/...`, or unhandled exception)
+        internal_crash_match = re.search(
+            r"(?:FileNotFoundError|OSError|IOError|KeyError|AttributeError|ImportError|RuntimeError)"
+            r".*?(?:/tmp/|/tests/|refs\.json|verify\.py)",
+            verify_log_text,
+            re.DOTALL,
+        ) or (
+            "Traceback (most recent call last):" in verify_log_text
+            and not any(f in verify_log_text for f in verifier_info["checked_files"])
+        )
+        if internal_crash_match:
+            verifier_observations.append(
+                {
+                    "obs_id": "ver:internal_crash",
+                    "type": "verifier_internal_crash",
+                    "subtype": "recompute_defect",
+                    "code": "VERIFIER_RECOMPUTE_DEFECT",
+                    "summary": f"Verifier crashed due to internal file/runtime error: {verify_log_text.splitlines()[-1][:200]}",
+                    "matched_text": verify_log_text[:400],
+                    "hazard_detected": True,
+                    "failure_binding": "direct",
+                    "binding_evidence": ["ver:fail_log"],
+                    "triggered": True,
+                    "source_file": "verifier/verify.log",
+                    "source_pointer": "L1",
+                }
+            )
+
     for h_idx, h in enumerate(verifier_info["hazards"], start=1):
         sub = h["subtype"]
+        affected_parser = h.get("affected_parser")
+        failure_binding = "none"
+        binding_evidence: List[str] = []
+        affected_input: Optional[str] = None
         triggered = False
+
         if sub == "namelist_slash_truncation" and (
             "outdir mismatch" in verify_log_text or "prefix mismatch" in verify_log_text
         ):
             triggered = True
+            failure_binding = "direct"
+            binding_evidence = ["ver:fail_log"]
+            affected_input = "namelist_file"
             contract_observations.append(
                 {
                     "contract_id": f"contract:{cid}",
@@ -360,38 +428,59 @@ def audit_contract(
             and not prompt_info["specifies_thermo_columns"]
         ):
             triggered = True
+            failure_binding = "direct"
+            binding_evidence = ["ver:fail_log"]
+            affected_input = "log.lammps"
             contract_observations.append(
                 {
                     "contract_id": f"contract:{cid}",
                     "item": "log.lammps:thermo_style_columns",
                     "prompt_requirement": "not_specified",
-                    "verifier_requirement": "hardcoded_column_1_as_pe",
+                    "verifier_requirement": "hardcoded_positional_split_column",
                     "agent_output_status": "ecoh_in_results_json_passed_ref_tolerance",
                     "alignment": "verifier_defect",
                     "details": (
-                        "Agent's `results.json` `a0` and `ecoh` passed Layer 3 reference tolerance (`refs.json`), "
-                        "but `verify.py` Layer 4 hardcoded `thermo[-1].split()[1]` as `pe` without checking the `Step` header columns."
+                        "Agent's `results.json` numerical values passed reference tolerance (`refs.json`), "
+                        "but `verify.py` indexed `.split()` positionally without mapping the `Step` header columns."
                     ),
                     "source_refs": ["task:instruction.md", "task:tests/verify.py", "verifier/verify.log"],
                 }
             )
             cid += 1
         elif sub == "scientific_notation_missing_d_exponent":
-            # Also check if D+ or d+ appears in agent outputs or verify failure
-            if re.search(r"\d+\.\d+[Dd][+-]\d+", verify_log_text):
-                triggered = True
-            verifier_observations.append(
-                {
-                    "obs_id": f"ver:hazard:{h_idx}",
-                    "type": "parser_hazard",
-                    "summary": h["description"],
-                    "matched_text": h["subtype"],
-                    "triggered": triggered,
-                    "source_file": "tests/verify.py",
-                    "source_pointer": "AST",
-                }
+            # Causal binding check: Do NOT trigger if D+03 only appears as a reference value while agent wrote an E-exponent value!
+            d_matches = list(re.finditer(r"[-+]?\d+\.\d+[Dd][+-]\d+", verify_log_text))
+            has_parse_error_symptom = bool(
+                re.search(
+                    r"(?:could not parse|cannot parse|failed to parse|unparseable|ValueError|NoneType)",
+                    verify_log_text,
+                    re.IGNORECASE,
+                )
             )
-            continue
+            # Also check if the regex prefix in `verify.py` directly precedes the D-exponent string in verify_log_text
+            prefix_matched_d_string = False
+            if affected_parser and d_matches:
+                prefix_part = re.split(r"\(\[", affected_parser)[0]
+                if prefix_part:
+                    try:
+                        if re.search(prefix_part + r"[-+]?\d+\.\d+[Dd][+-]\d+", verify_log_text):
+                            prefix_matched_d_string = True
+                    except re.error:
+                        pass
+
+            # Exclude cases where verify.log explicitly says agent's parsed value (e.g. `9.99E+02`) != reference `1.23D+03`
+            agent_wrote_different_e_value = bool(
+                re.search(r"[-+]?\d+\.\d+[Ee][+-]\d+", verify_log_text)
+                and not has_parse_error_symptom
+            )
+
+            if d_matches and (has_parse_error_symptom or prefix_matched_d_string) and not agent_wrote_different_e_value:
+                triggered = True
+                failure_binding = "direct"
+                binding_evidence = ["ver:fail_log"]
+                affected_input = d_matches[0].group(0)
+            elif d_matches:
+                failure_binding = "none"
 
         verifier_observations.append(
             {
@@ -399,6 +488,11 @@ def audit_contract(
                 "type": "parser_hazard" if "REGEX" in h["hazard_type"] else "implicit_column_assumption",
                 "summary": h["description"],
                 "matched_text": h["subtype"],
+                "hazard_detected": True,
+                "failure_binding": failure_binding,
+                "binding_evidence": binding_evidence,
+                "affected_input": affected_input,
+                "affected_parser": affected_parser,
                 "triggered": triggered,
                 "source_file": "tests/verify.py",
                 "source_pointer": "AST",

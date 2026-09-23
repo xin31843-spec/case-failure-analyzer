@@ -1,0 +1,9 @@
+[project]
+name = "case-failure-analyzer"
+version = "1.2.0"
+description = "Evidence-first causal failure analyzer for scientific-computing benchmark cases (Chinese & English bilingual reports)."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -84,6 +84,7 @@ def classify_tool_event(
 def normalize_trajectory(
     trajectory_path: Optional[Path],
     max_obs_bytes: int = 2000,
+    max_file_bytes: int = 50_000_000,
 ) -> Dict[str, Any]:
     if trajectory_path is None or not trajectory_path.is_file():
         return {
@@ -97,6 +98,19 @@ def normalize_trajectory(
         }
 
     try:
+        file_size = trajectory_path.stat().st_size
+        if file_size > max_file_bytes:
+            return {
+                "exists": True,
+                "schema_version": None,
+                "warnings": [
+                    f"trajectory.json size ({file_size} bytes) exceeds max_file_bytes ({max_file_bytes})"
+                ],
+                "events": [],
+                "behavioral_signals": [],
+                "written_files": [],
+                "read_files": [],
+            }
         raw = json.loads(trajectory_path.read_text(encoding="utf-8", errors="replace"))
     except Exception as exc:
         return {
