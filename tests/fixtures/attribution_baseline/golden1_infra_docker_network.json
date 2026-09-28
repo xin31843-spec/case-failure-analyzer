@@ -1,0 +1,114 @@
+{
+  "schema_version": "failure-analysis-v1",
+  "case_id": "cp2k-aimd-water",
+  "trial_name": "trial_1",
+  "verdict": "errored",
+  "failure_stage": "environment_build",
+  "detection_stage": "runner",
+  "first_unrecovered_deviation": {
+    "status": "identified",
+    "event_ref": "err:1",
+    "timestamp": null,
+    "summary": "Environment build/setup failed (INFRA_EXTERNAL_NETWORK) before agent container could start."
+  },
+  "failure_manifestation": {
+    "type": "dependency_install_failure",
+    "summary": "ror: Docker compose command failed for environment. apt-get Failed to fetch"
+  },
+  "primary_root_cause": {
+    "category": "infra",
+    "subtype": "external_network",
+    "code": "INFRA_EXTERNAL_NETWORK",
+    "summary": "Container environment failed during `environment_build` (INFRA_EXTERNAL_NETWORK); agent never started (`runtime.agent_started == false`).",
+    "confidence": 0.67,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "high"
+  },
+  "contributing_factors": [
+    {
+      "category": "infra",
+      "subtype": "container_build",
+      "code": "INFRA_CONTAINER_BUILD",
+      "summary": "Accompanying infrastructure error: RuntimeError: Docker compose command failed for environment. apt-get Failed to fetch",
+      "confidence": 0.17,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "competing_hypotheses": [
+    {
+      "hypothesis_id": "H1",
+      "category": "infra",
+      "subtype": "external_network",
+      "claim": "Container build / network failure prevented trial startup.",
+      "evidence_for": [
+        "err:1",
+        "err:2",
+        "art:trial_result"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [],
+      "counterfactual_test": "Pre-pull image or configure local Docker/apt mirror and re-run.",
+      "confidence": 0.67,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "high"
+    },
+    {
+      "hypothesis_id": "H2",
+      "category": "agent",
+      "subtype": "premature_termination",
+      "claim": "Agent failed to produce output files.",
+      "evidence_for": [],
+      "evidence_against": [
+        "err:1",
+        "err:2",
+        "art:trial_result"
+      ],
+      "missing_evidence": [
+        "agent/trajectory.json"
+      ],
+      "counterfactual_test": "N/A (agent never launched)",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    },
+    {
+      "hypothesis_id": "H3",
+      "category": "agent",
+      "subtype": "result_validation",
+      "code": "AGENT_RESULT_VALIDATION",
+      "claim": "Agent produced invalid or missing simulation results.",
+      "evidence_for": [],
+      "evidence_against": [
+        "err:1",
+        "err:2"
+      ],
+      "missing_evidence": [
+        "Positive behavioral, scientific, or contract-mismatch evidence implicating agent decisions"
+      ],
+      "counterfactual_test": "Inspect agent trajectory and generated workspace files for explicit errors.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "evidence_refs": [
+    "err:1",
+    "err:2",
+    "art:trial_result"
+  ],
+  "excluded_hypotheses": [
+    {
+      "hypothesis_id": "H2",
+      "category": "agent",
+      "reason": "Ruled out by Hard Attribution Gate: `runtime.agent_started == false` and `agent/trajectory.json` was never created because container setup exited prior to agent launch."
+    }
+  ],
+  "recommended_actions": [
+    {
+      "owner": "Infra",
+      "action": "Pre-pull base Docker images (`docker pull`) and configure resilient registry/apt mirrors before launching benchmark jobs."
+    }
+  ],
+  "skill_prescription": null
+}

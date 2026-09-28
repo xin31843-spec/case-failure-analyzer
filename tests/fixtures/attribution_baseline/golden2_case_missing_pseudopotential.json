@@ -1,0 +1,93 @@
+{
+  "schema_version": "failure-analysis-v1",
+  "case_id": "qe-missing-upf",
+  "trial_name": "trial_1",
+  "verdict": "failed",
+  "failure_stage": "agent_execution",
+  "detection_stage": "verifier_execution",
+  "first_unrecovered_deviation": {
+    "status": "identified",
+    "event_ref": "contract:1",
+    "timestamp": null,
+    "summary": "Prompt references asset `Ge_nonexistent.UPF`, which does not exist in `environment/assets/` or `Dockerfile`."
+  },
+  "failure_manifestation": {
+    "type": "missing_task_asset",
+    "summary": "Prompt references asset `Ge_nonexistent.UPF`, which does not exist in `environment/assets/` or `Dockerfile`."
+  },
+  "primary_root_cause": {
+    "category": "case",
+    "subtype": "missing_asset",
+    "code": "CASE_MISSING_ASSET",
+    "summary": "Prompt references asset `Ge_nonexistent.UPF`, which does not exist in `environment/assets/` or `Dockerfile`.",
+    "confidence": 0.33,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "medium"
+  },
+  "contributing_factors": [],
+  "competing_hypotheses": [
+    {
+      "hypothesis_id": "H1",
+      "category": "case",
+      "subtype": "missing_asset",
+      "claim": "Prompt references asset `Ge_nonexistent.UPF`, which does not exist in `environment/assets/` or `Dockerfile`.",
+      "evidence_for": [
+        "contract:1"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [],
+      "counterfactual_test": "Add the missing pseudopotential/input asset to `environment/assets/`.",
+      "confidence": 0.33,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "medium"
+    },
+    {
+      "hypothesis_id": "H2",
+      "category": "agent",
+      "subtype": "path_or_dependency_discovery",
+      "claim": "Agent failed to locate the required asset inside the container.",
+      "evidence_for": [],
+      "evidence_against": [
+        "contract:1"
+      ],
+      "missing_evidence": [],
+      "counterfactual_test": "Verify `environment/assets/` and `Dockerfile` (file is absent).",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    },
+    {
+      "hypothesis_id": "H3",
+      "category": "agent",
+      "subtype": "result_validation",
+      "code": "AGENT_RESULT_VALIDATION",
+      "claim": "Agent produced invalid or missing simulation results.",
+      "evidence_for": [],
+      "evidence_against": [],
+      "missing_evidence": [
+        "Positive behavioral, scientific, or contract-mismatch evidence implicating agent decisions"
+      ],
+      "counterfactual_test": "Inspect agent trajectory and generated workspace files for explicit errors.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "evidence_refs": [
+    "contract:1"
+  ],
+  "excluded_hypotheses": [
+    {
+      "hypothesis_id": "H2",
+      "category": "agent",
+      "reason": "The asset explicitly promised in `instruction.md` was absent from the task environment."
+    }
+  ],
+  "recommended_actions": [
+    {
+      "owner": "Case",
+      "action": "Add the missing file (asset:Ge_nonexistent.UPF) to `environment/assets/` or update `instruction.md`."
+    }
+  ],
+  "skill_prescription": null
+}

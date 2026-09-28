@@ -1,0 +1,81 @@
+{
+  "schema_version": "failure-analysis-v1",
+  "case_id": "empty-task",
+  "trial_name": "trial_1",
+  "verdict": "errored",
+  "failure_stage": "unknown",
+  "detection_stage": "runner",
+  "first_unrecovered_deviation": {
+    "status": "not_identified",
+    "event_ref": null,
+    "timestamp": null,
+    "summary": "Agent did not start and no exception or container build logs are available to pinpoint the failure."
+  },
+  "failure_manifestation": {
+    "type": "missing_execution_logs",
+    "summary": "Agent did not start and no exception or build logs are available."
+  },
+  "primary_root_cause": {
+    "category": "unknown",
+    "subtype": "insufficient_evidence",
+    "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+    "summary": "Insufficient log artifacts to determine why execution terminated prior to agent startup.",
+    "confidence": 0.0,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "low"
+  },
+  "contributing_factors": [],
+  "competing_hypotheses": [
+    {
+      "hypothesis_id": "H1",
+      "category": "agent",
+      "subtype": "result_validation",
+      "code": "AGENT_RESULT_VALIDATION",
+      "claim": "Agent produced invalid or missing simulation results.",
+      "evidence_for": [],
+      "evidence_against": [],
+      "missing_evidence": [
+        "Positive behavioral, scientific, or contract-mismatch evidence implicating agent decisions"
+      ],
+      "counterfactual_test": "Inspect agent trajectory and generated workspace files for explicit errors.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    },
+    {
+      "hypothesis_id": "H2",
+      "category": "unknown",
+      "subtype": "insufficient_evidence",
+      "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+      "claim": "Available logs and artifacts cannot deterministically isolate a single root cause.",
+      "evidence_for": [
+        "art:trial_result"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [
+        "Complete trajectory and verifier diagnostic logs"
+      ],
+      "counterfactual_test": "Re-run with full runner and verifier logging enabled.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "evidence_refs": [
+    "art:trial_result"
+  ],
+  "excluded_hypotheses": [
+    {
+      "hypothesis_id": "H_AGENT",
+      "category": "agent",
+      "reason": "Agent never started (`runtime.agent_started == false`); cannot blame agent without trajectory."
+    }
+  ],
+  "recommended_actions": [
+    {
+      "owner": "Infra",
+      "action": "Preserve runner `exception.txt` and `trial.log` when container setup aborts."
+    }
+  ],
+  "skill_prescription": null
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": "failure-analysis-v1",
+  "case_id": "passed-task",
+  "trial_name": "trial_1",
+  "verdict": "passed",
+  "failure_stage": "none",
+  "detection_stage": "verifier_execution",
+  "first_unrecovered_deviation": null,
+  "failure_manifestation": {
+    "type": "none",
+    "summary": "Trial completed and passed all verifier checks (reward=1.0)."
+  },
+  "primary_root_cause": {
+    "category": "none",
+    "subtype": "none",
+    "code": "NONE",
+    "summary": "No failure occurred; trial completed and passed verification (reward >= 1.0).",
+    "confidence": 1.0,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "high"
+  },
+  "contributing_factors": [],
+  "competing_hypotheses": [],
+  "evidence_refs": [
+    "art:trial_result"
+  ],
+  "excluded_hypotheses": [],
+  "recommended_actions": [],
+  "skill_prescription": null
+}

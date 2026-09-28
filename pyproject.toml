@@ -1,9 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "case-failure-analyzer"
 version = "1.3.0"
 description = "Portable, zero-dependency, evidence-first causal failure analyzer for computational chemistry, ML interatomic potentials (MLIP), and scientific computing benchmarks."
 requires-python = ">=3.9"
+# Runtime dependencies stay empty: the analyzer is a portable, stdlib-only skill.
+# Test tooling lives in the `dev` extra and is never needed to run an analysis.
 dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.setuptools]
+# Script-only skill: `scripts/` and `tests/` are invoked by path, not imported as
+# an installed distribution. Declaring no packages keeps `pip install -e ".[dev]"`
+# deterministic instead of letting setuptools flat-layout auto-discovery guess.
+packages = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

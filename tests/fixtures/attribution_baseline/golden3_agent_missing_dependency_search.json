@@ -1,0 +1,116 @@
+{
+  "schema_version": "failure-analysis-v1",
+  "case_id": "cp2k-sp",
+  "trial_name": "trial_1",
+  "verdict": "failed",
+  "failure_stage": "agent_execution",
+  "detection_stage": "verifier_execution",
+  "first_unrecovered_deviation": {
+    "status": "identified",
+    "event_ref": "trajectory:step:1:tool:0",
+    "timestamp": null,
+    "summary": "Simulation failed with `basis_or_potential_missing` (cp2k) because agent did not search container directories (`/opt/` or `/workspace/assets/`) or resolve model/potential/force-field paths."
+  },
+  "failure_manifestation": {
+    "type": "verifier_check_failed",
+    "summary": "Simulation failed with `basis_or_potential_missing` (cp2k) because agent did not search container directories (`/opt/` or `/workspace/assets/`) or resolve model/potential/force-field paths."
+  },
+  "primary_root_cause": {
+    "category": "agent",
+    "subtype": "path_or_dependency_discovery",
+    "code": "AGENT_PATH_OR_DEPENDENCY_DISCOVERY",
+    "summary": "Simulation failed with `basis_or_potential_missing` (cp2k) because agent did not search container directories (`/opt/` or `/workspace/assets/`) or resolve model/potential/force-field paths.",
+    "confidence": 0.67,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "high"
+  },
+  "contributing_factors": [],
+  "competing_hypotheses": [
+    {
+      "hypothesis_id": "H1",
+      "category": "agent",
+      "subtype": "path_or_dependency_discovery",
+      "claim": "Simulation failed with `basis_or_potential_missing` (cp2k) because agent did not search container directories (`/opt/` or `/workspace/assets/`) or resolve model/potential/force-field paths.",
+      "evidence_for": [
+        "sci:1",
+        "sig:missing_log_inspection",
+        "sig:premature_completion"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [],
+      "counterfactual_test": "Correct the agent's input script / workflow decision and run `verify.py`.",
+      "confidence": 0.67,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "high"
+    },
+    {
+      "hypothesis_id": "H2",
+      "category": "infra",
+      "subtype": "container_runtime",
+      "claim": "Infrastructure prevented simulation execution.",
+      "evidence_for": [],
+      "evidence_against": [
+        "art:trajectory_json"
+      ],
+      "missing_evidence": [],
+      "counterfactual_test": "Check `runtime.agent_started` and `runtime.verifier_started` (both true).",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    },
+    {
+      "hypothesis_id": "H3",
+      "category": "agent",
+      "subtype": "error_diagnosis",
+      "code": "AGENT_ERROR_DIAGNOSIS",
+      "claim": "Agent decision, input parameter, or missing output violated explicit task requirements.",
+      "evidence_for": [
+        "sci:1",
+        "sig:premature_completion"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [],
+      "counterfactual_test": "Fix the agent's simulation input or output schema and run `verify.py`.",
+      "confidence": 0.5,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "medium"
+    },
+    {
+      "hypothesis_id": "H4",
+      "category": "unknown",
+      "subtype": "insufficient_evidence",
+      "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+      "claim": "Available logs and artifacts cannot deterministically isolate a single root cause.",
+      "evidence_for": [
+        "art:trajectory_json"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [
+        "Complete trajectory and verifier diagnostic logs"
+      ],
+      "counterfactual_test": "Re-run with full runner and verifier logging enabled.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "evidence_refs": [
+    "sci:1",
+    "sig:missing_log_inspection",
+    "sig:premature_completion"
+  ],
+  "excluded_hypotheses": [
+    {
+      "hypothesis_id": "H2",
+      "category": "infra",
+      "reason": "Container built cleanly, agent executed commands (`runtime.agent_started == true`), and verifier ran to completion."
+    }
+  ],
+  "recommended_actions": [
+    {
+      "owner": "Agent Policy",
+      "action": "Simulation failed with `basis_or_potential_missing` (cp2k) because agent did not search container directories (`/opt/` or `/workspace/assets/`) or resolve model/potential/force-field paths."
+    }
+  ],
+  "skill_prescription": null
+}

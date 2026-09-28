@@ -1,0 +1,90 @@
+{
+  "schema_version": "failure-analysis-v1",
+  "case_id": "qe-regex",
+  "trial_name": "trial_1",
+  "verdict": "failed",
+  "failure_stage": "verifier_execution",
+  "detection_stage": "verifier_execution",
+  "first_unrecovered_deviation": {
+    "status": "identified",
+    "event_ref": "ver:hazard:1",
+    "timestamp": null,
+    "summary": "Verifier regex `VAL=\\s*([-\\d.E+]+)` parses floating-point numbers without Fortran `D/d` exponent support."
+  },
+  "failure_manifestation": {
+    "type": "verifier_false_rejection",
+    "summary": "FAIL: could not parse line 'VAL= -0.12345D+03'"
+  },
+  "primary_root_cause": {
+    "category": "verifier",
+    "subtype": "regex_or_parser_defect",
+    "code": "VERIFIER_REGEX_OR_PARSER_DEFECT",
+    "summary": "Verifier regex `VAL=\\s*([-\\d.E+]+)` parses floating-point numbers without Fortran `D/d` exponent support.",
+    "confidence": 0.5,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "medium"
+  },
+  "contributing_factors": [
+    {
+      "category": "case",
+      "subtype": "ambiguous_contract",
+      "code": "CASE_AMBIGUOUS_CONTRACT",
+      "summary": "Prompt did not explicitly constrain input/log syntax formatting assumed by `verify.py`.",
+      "confidence": 0.17,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "competing_hypotheses": [
+    {
+      "hypothesis_id": "H1",
+      "category": "verifier",
+      "subtype": "regex_or_parser_defect",
+      "claim": "Verifier regex `VAL=\\s*([-\\d.E+]+)` parses floating-point numbers without Fortran `D/d` exponent support.",
+      "evidence_for": [
+        "ver:hazard:1",
+        "ver:fail_log"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [],
+      "counterfactual_test": "Fix `tests/verify.py` internal file/parser logic and re-verify existing trial artifacts.",
+      "confidence": 0.5,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "medium"
+    },
+    {
+      "hypothesis_id": "H2",
+      "category": "agent",
+      "subtype": "result_validation",
+      "claim": "Agent produced invalid or missing simulation results.",
+      "evidence_for": [],
+      "evidence_against": [
+        "ver:hazard:1",
+        "ver:fail_log"
+      ],
+      "missing_evidence": [],
+      "counterfactual_test": "Inspect agent's workspace outputs against `instruction.md` requirements.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "evidence_refs": [
+    "ver:hazard:1",
+    "ver:fail_log"
+  ],
+  "excluded_hypotheses": [
+    {
+      "hypothesis_id": "H2",
+      "category": "agent",
+      "reason": "Agent's simulation outputs satisfied the prompt contract before hitting the causally bound verifier parser/header defect."
+    }
+  ],
+  "recommended_actions": [
+    {
+      "owner": "Verifier",
+      "action": "Fix `tests/verify.py` (VERIFIER_REGEX_OR_PARSER_DEFECT): ensure internal reference paths exist and use robust namelist/float/header parsing."
+    }
+  ],
+  "skill_prescription": null
+}

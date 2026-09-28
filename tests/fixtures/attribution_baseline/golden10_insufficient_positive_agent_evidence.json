@@ -1,0 +1,76 @@
+{
+  "schema_version": "failure-analysis-v1",
+  "case_id": "md-task",
+  "trial_name": "trial_1",
+  "verdict": "failed",
+  "failure_stage": "unknown",
+  "detection_stage": "verifier_execution",
+  "first_unrecovered_deviation": {
+    "status": "not_identified",
+    "event_ref": null,
+    "timestamp": null,
+    "summary": "No unrecovered agent decision or deterministic infrastructure/verifier defect could be isolated from available artifacts."
+  },
+  "failure_manifestation": {
+    "type": "unattributed_verification_failure",
+    "summary": "FAIL: agent output absent; protocol note mentions chaotic behaviour of the reference run"
+  },
+  "primary_root_cause": {
+    "category": "unknown",
+    "subtype": "insufficient_evidence",
+    "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+    "summary": "Available logs and trajectory events do not provide positive unrecovered causal evidence to attribute the failure to Agent decisions, Verifier defects, or Infrastructure.",
+    "confidence": 0.0,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "low"
+  },
+  "contributing_factors": [],
+  "competing_hypotheses": [
+    {
+      "hypothesis_id": "H1",
+      "category": "agent",
+      "subtype": "result_validation",
+      "code": "AGENT_RESULT_VALIDATION",
+      "claim": "Agent produced invalid or missing simulation results.",
+      "evidence_for": [],
+      "evidence_against": [],
+      "missing_evidence": [
+        "Positive behavioral, scientific, or contract-mismatch evidence implicating agent decisions"
+      ],
+      "counterfactual_test": "Inspect agent trajectory and generated workspace files for explicit errors.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    },
+    {
+      "hypothesis_id": "H2",
+      "category": "unknown",
+      "subtype": "insufficient_evidence",
+      "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+      "claim": "Available logs and artifacts cannot deterministically isolate a single root cause.",
+      "evidence_for": [
+        "art:trajectory_json"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [
+        "Complete trajectory and verifier diagnostic logs"
+      ],
+      "counterfactual_test": "Re-run with full runner and verifier logging enabled.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "evidence_refs": [
+    "ver:fail_log",
+    "art:trajectory_json"
+  ],
+  "excluded_hypotheses": [],
+  "recommended_actions": [
+    {
+      "owner": "Infra",
+      "action": "Collect complete `agent/trajectory.json` and detailed `verifier/verify.log` tracebacks to disambiguate competing hypotheses."
+    }
+  ],
+  "skill_prescription": null
+}

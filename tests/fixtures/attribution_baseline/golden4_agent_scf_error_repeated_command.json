@@ -1,0 +1,122 @@
+{
+  "schema_version": "failure-analysis-v1",
+  "case_id": "qe-scf",
+  "trial_name": "trial_1",
+  "verdict": "failed",
+  "failure_stage": "agent_execution",
+  "detection_stage": "verifier_execution",
+  "first_unrecovered_deviation": {
+    "status": "identified",
+    "event_ref": "trajectory:step:2:tool:0",
+    "timestamp": null,
+    "summary": "Software emitted `scf_convergence_not_achieved` (quantum-espresso), but agent failed to diagnose the physical/input cause and repeatedly re-executed the failing setup (`sig:repeated_fail:2:0`)."
+  },
+  "failure_manifestation": {
+    "type": "verifier_check_failed",
+    "summary": "Software emitted `scf_convergence_not_achieved` (quantum-espresso), but agent failed to diagnose the physical/input cause and repeatedly re-executed the failing setup (`sig:repeated_fail:2:0`)."
+  },
+  "primary_root_cause": {
+    "category": "agent",
+    "subtype": "error_diagnosis",
+    "code": "AGENT_ERROR_DIAGNOSIS",
+    "summary": "Software emitted `scf_convergence_not_achieved` (quantum-espresso), but agent failed to diagnose the physical/input cause and repeatedly re-executed the failing setup (`sig:repeated_fail:2:0`).",
+    "confidence": 0.67,
+    "confidence_kind": "heuristic_evidence_score",
+    "evidence_strength": "high"
+  },
+  "contributing_factors": [],
+  "competing_hypotheses": [
+    {
+      "hypothesis_id": "H1",
+      "category": "agent",
+      "subtype": "error_diagnosis",
+      "claim": "Software emitted `scf_convergence_not_achieved` (quantum-espresso), but agent failed to diagnose the physical/input cause and repeatedly re-executed the failing setup (`sig:repeated_fail:2:0`).",
+      "evidence_for": [
+        "sci:1",
+        "sig:asset_mod:1:0",
+        "sig:repeated_fail:2:0",
+        "sig:asset_mod:2:0"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [],
+      "counterfactual_test": "Correct the agent's input script / workflow decision and run `verify.py`.",
+      "confidence": 0.67,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "high"
+    },
+    {
+      "hypothesis_id": "H2",
+      "category": "infra",
+      "subtype": "container_runtime",
+      "claim": "Infrastructure prevented simulation execution.",
+      "evidence_for": [],
+      "evidence_against": [
+        "art:trajectory_json"
+      ],
+      "missing_evidence": [],
+      "counterfactual_test": "Check `runtime.agent_started` and `runtime.verifier_started` (both true).",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    },
+    {
+      "hypothesis_id": "H3",
+      "category": "unknown",
+      "subtype": "insufficient_evidence",
+      "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+      "claim": "Available logs and artifacts cannot deterministically isolate a single root cause.",
+      "evidence_for": [
+        "art:trajectory_json"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [
+        "Complete trajectory and verifier diagnostic logs"
+      ],
+      "counterfactual_test": "Re-run with full runner and verifier logging enabled.",
+      "confidence": 0.0,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "low"
+    }
+  ],
+  "evidence_refs": [
+    "sci:1",
+    "sig:asset_mod:1:0",
+    "sig:repeated_fail:2:0",
+    "sig:asset_mod:2:0"
+  ],
+  "excluded_hypotheses": [
+    {
+      "hypothesis_id": "H2",
+      "category": "infra",
+      "reason": "Container built cleanly, agent executed commands (`runtime.agent_started == true`), and verifier ran to completion."
+    }
+  ],
+  "recommended_actions": [
+    {
+      "owner": "Agent Policy",
+      "action": "Software emitted `scf_convergence_not_achieved` (quantum-espresso), but agent failed to diagnose the physical/input cause and repeatedly re-executed the failing setup (`sig:repeated_fail:2:0`)."
+    }
+  ],
+  "skill_prescription": {
+    "recommended_skill": {
+      "name": "quantum-espresso-scf-convergence-not-achieved-diagnosis",
+      "trigger": [
+        "quantum-espresso outputs `convergence NOT achieved after 100 iterations`",
+        "Error family `scf_convergence_not_achieved` encountered during simulation"
+      ],
+      "capability_gap": [
+        "Agent failed to diagnose `scf_convergence_not_achieved` and repeated identical failing runs."
+      ],
+      "required_guidance": [
+        "Inspect `electron_maxstep` and `mixing_beta` in `&ELECTRONS`, `occupations` and `degauss` in `&SYSTEM` before rerunning.",
+        "Address candidate physical causes: insufficient_electron_maxstep, high_mixing_beta, metallic_state_without_smearing."
+      ],
+      "anti_patterns": [
+        "Do not rerun the exact same command/input after a deterministic convergence or stability error."
+      ],
+      "evidence_cases": [
+        "qe-scf:trajectory:step:2:tool:0"
+      ]
+    }
+  }
+}
