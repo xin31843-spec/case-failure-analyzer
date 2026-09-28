@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,14 +26,13 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from audit_contract import audit_contract
-from confidence import attach_confidence_metadata
 from discover_artifacts import discover_all, discover_trials
 from extract_runtime_errors import extract_runtime_errors
 from extract_scientific_errors import extract_scientific_errors
 from generate_hypotheses import generate_candidate_hypotheses
 from normalize_trajectory import normalize_trajectory
 from render_report import render_report_markdown, render_skill_prescription_markdown
-from runtime_state import SCHEMA_VERSION, resolve_trajectory_path
+from runtime_state import resolve_trajectory_path
 from validate_analysis import validate_all
 from attribution.engine import run_attribution_engine
 from diagnostics import format_diagnostic_line, merge_diagnostics
