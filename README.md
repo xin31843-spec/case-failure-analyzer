@@ -106,9 +106,42 @@ The entrypoint fails fast **before** writing any report, so an invalid path can 
 
 ## Running Tests
 
+The runtime is stdlib-only; the test tooling is not. `make test` needs no install:
+
 ```bash
-pytest tests/
-# or
-python3 -m unittest discover -s tests
+make test          # canonical: python3 -m unittest discover -s tests -t .
+make compile       # syntax check over scripts/ and tests/
+make smoke         # end-to-end CLI run against the committed 2-trial fixture
+make dev           # optional: install the [dev] extra (pytest)
+make test-pytest   # optional pytest run
+make help          # list all targets
 ```
+
+Without `make`, the equivalent commands are:
+
+```bash
+python3 -m unittest discover -s tests -t .
+python3 -m pytest -q          # only after `make dev`
+```
+
+### Interactive diagnostics
+
+`analysis.json` carries an optional `decision_trace`: the ordered list of gates that were evaluated, why each abstained, and which one was selected. It answers "why this root cause and not another" without reading the gate chain, and it is what `tests/test_attribution_decisions.py` asserts against.
+
+`evidence.json` carries an optional `diagnostics` list. A non-empty list means some recoverable failure degraded the evidence — for example an unparseable `tests/verify.py`, which leaves the verifier looking clean because no AST-derived parser hazards could be collected. The same records are printed to stderr as one JSON line each (`ANALYSIS DIAGNOSTIC: {...}`); stdout and exit codes are unaffected.
+
+### Architecture
+
+The causal decision lives in `scripts/attribution/` as one function per gate, run in a fixed order by `engine.py`:
+
+```text
+gate0_passed → gate1a_infra_prestartup → gate1b_unknown_no_evidence
+             → gate2_case_definition → gate3_verifier_defect
+             → gate4_numerical_divergence → gate5_insufficient_positive_evidence
+             → gate6_agent_primary
+```
+
+Each gate either abstains or returns a complete 15-key attribution, and the first match wins. Gate order is load-bearing and pinned by tests; `scripts/attribution/schema.py` enforces the key contract at construction.
+
+`tests/test_attribution_characterization.py` snapshots the full `analysis` output for ten archetype fixtures against committed baselines, so any change to attribution behavior shows up as a reviewable diff rather than as a subtly different report. Regenerate deliberately with `UPDATE_BASELINE=1`.
 

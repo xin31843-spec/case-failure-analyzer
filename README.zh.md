@@ -105,8 +105,41 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/render
 
 ## 运行测试
 
+运行时仅依赖标准库；测试工具则需要额外安装。`make test` 无需安装任何依赖：
+
 ```bash
-pytest tests/
-# 或
-python3 -m unittest discover -s tests
+make test          # 规范命令：python3 -m unittest discover -s tests -t .
+make compile       # 对 scripts/ 与 tests/ 做语法检查
+make smoke         # 针对已提交的双 trial fixture 做端到端 CLI 运行
+make dev           # 可选：安装 [dev] 依赖（pytest）
+make test-pytest   # 可选：使用 pytest 运行
+make help          # 列出全部目标
 ```
+
+不使用 `make` 时的等价命令：
+
+```bash
+python3 -m unittest discover -s tests -t .
+python3 -m pytest -q          # 仅在执行 `make dev` 之后
+```
+
+### 交互式诊断
+
+`analysis.json` 包含一个可选的 `decision_trace`：按序记录被评估的各个归因门（gate）、每个门为何放弃（abstain）以及最终命中的门。无需阅读门链即可回答“为何是该根因而非其他”。`tests/test_attribution_decisions.py` 正是针对它做断言。
+
+`evidence.json` 包含一个可选的 `diagnostics` 列表。该列表非空表示某次可恢复的失败降低了证据质量——例如 `tests/verify.py` 无法解析时，由于无法收集基于 AST 的解析器隐患，验证器会「看起来是干净的」。相同记录会以每行一条 JSON 的形式输出到 stderr（`ANALYSIS DIAGNOSTIC: {...}`）；stdout 与退出码不受影响。
+
+### 架构
+
+因果判定位于 `scripts/attribution/`，每个门（gate）一个函数，由 `engine.py` 按固定顺序执行：
+
+```text
+gate0_passed → gate1a_infra_prestartup → gate1b_unknown_no_evidence
+             → gate2_case_definition → gate3_verifier_defect
+             → gate4_numerical_divergence → gate5_insufficient_positive_evidence
+             → gate6_agent_primary
+```
+
+每个门要么放弃，要么返回完整的 15 键归因结果，最先命中者生效。门的顺序属于关键契约并由测试锁定；`scripts/attribution/schema.py` 在构造时即校验键契约。
+
+`tests/test_attribution_characterization.py` 会将十种原型 fixture 的完整 `analysis` 输出与已提交的基线快照进行比对，因此任何归因行为的变化都会表现为可复核的 diff，而不会变成一份细微不同的报告。如需有意更新基线，使用 `UPDATE_BASELINE=1` 重新生成。

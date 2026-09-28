@@ -34,6 +34,14 @@ Require or discover:
 - Output schema version: `failure-analysis-v1` (see `references/evidence-schema.md` and `references/report-schema.md`).
 - Bilingual output is mandatory for `--phase all`: `report.md`, `report.zh.md`, `report.en.md`, and `skill-prescription.md` only when eligible.
 - Invalid inputs (missing `--job`/`--task`, unknown `--trial`, empty job tree without job-level evidence) exit with code `2` and write nothing.
+- `analysis.json` carries an optional `decision_trace` recording which gate was evaluated, why each abstained, and which one was selected. It is additive and never required: a hand-authored or model-written `analysis.json` validates without one.
+- `evidence.json` carries an optional `diagnostics` list recording any recovery that degraded evidence (an unparseable `tests/verify.py` or `verifier/reward.txt`). A non-empty list means some conclusion rests on less than the artifacts appear to show; the same records are printed to stderr.
+
+### Attribution Internals
+
+The causal decision is a fixed sequence of gates in `scripts/attribution/gates/`, run in declared order by `scripts/attribution/engine.py`. The first gate to match returns the attribution; every gate either abstains (`None`) or returns a complete 15-key result. `scripts/attribution/schema.py` enforces that contract, and `scripts/attribution/context.py` precomputes what the gates share.
+
+Gate order is load-bearing and is pinned by tests — do not reorder gates or convert an abstaining gate into a fall-through. To change attribution behavior, edit the relevant gate; the decision-table tests in `tests/test_attribution_decisions.py` describe each gate's input conditions.
 
 ### Workflow
 
