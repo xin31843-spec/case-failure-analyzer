@@ -12,6 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from diagnostics import WARNING, make_diagnostic
+
 SCHEMA_VERSION = "failure-analysis-v1"
 SUPPORTED_ATIF_VERSIONS = ("ATIF-v1.7", "ATIF-v1.6", "ATIF-v1.5")
 
@@ -58,6 +60,7 @@ def resolve_verifier_script_path(task_dir: Optional[Path]) -> Optional[Path]:
 def extract_trial_reward(
     trial_result: Dict[str, Any],
     trial_dir: Optional[Path],
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[float]:
     reward_txt_path = trial_dir / "verifier" / "reward.txt" if trial_dir else None
     reward_val: Optional[float] = None
@@ -66,8 +69,28 @@ def extract_trial_reward(
             raw_text = reward_txt_path.read_text(encoding="utf-8", errors="replace").strip()
             if raw_text:
                 reward_val = float(raw_text.splitlines()[0].strip())
-        except Exception:
+        except Exception as exc:
+            # Recovery is correct (the caller falls back to result.json), but an
+            # unparseable reward silently changes Gate 0's pass detection, so the
+            # downgrade is recorded rather than swallowed.
             reward_val = None
+            if diagnostics is not None:
+                diagnostics.append(
+                    make_diagnostic(
+                        stage="runtime_state.extract_trial_reward",
+                        code="REWARD_PARSE_FAILED",
+                        severity=WARNING,
+                        message="Could not parse verifier/reward.txt as a float.",
+                        source_ref="art:verifier_reward",
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                        impact=(
+                            "`runtime.reward` falls back to result.json metadata; if that is "
+                            "absent the reward stays null and Gate 0 can no longer detect a "
+                            "passing trial from the reward value."
+                        ),
+                    )
+                )
 
     if reward_val is None and isinstance(trial_result, dict):
         vr = trial_result.get("verifier_result")
@@ -99,6 +122,7 @@ def compute_runtime_state(
 ) -> Dict[str, Any]:
     job_res = job_result if isinstance(job_result, dict) else {}
     trial_res = trial_result if isinstance(trial_result, dict) else {}
+    diagnostics: List[Dict[str, Any]] = []
 
     traj_exists = bool(
         trial_dir
@@ -171,7 +195,7 @@ def compute_runtime_state(
         trial_dir is None and _safe_int(stats.get("n_errored_trials", 0)) > 0
     )
 
-    reward_val = extract_trial_reward(trial_res, trial_dir)
+    reward_val = extract_trial_reward(trial_res, trial_dir, diagnostics)
     exc_info = trial_res.get("exception_info")
     has_trial_exception = bool(
         exc_info is not None or exception_txt_exists or job_abort_without_trial_dir
@@ -235,6 +259,7 @@ def compute_runtime_state(
         "verdict": verdict,
         "exit_status": exit_status,  # Deprecated alias kept for schema compatibility
         "reward": reward_val,
+        "diagnostics": diagnostics,
         "agent_started": agent_started,
         "verifier_started": verifier_started,
         "has_trial_exception": has_trial_exception,

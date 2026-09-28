@@ -37,6 +37,7 @@ from render_report import render_report_markdown, render_skill_prescription_mark
 from runtime_state import SCHEMA_VERSION, resolve_trajectory_path
 from validate_analysis import validate_all
 from attribution.engine import run_attribution_engine
+from diagnostics import format_diagnostic_line, merge_diagnostics
 
 
 class ReplayNotSupportedError(RuntimeError):
@@ -96,6 +97,11 @@ def collect_case_evidence(
         "verifier_observations": contract_res["verifier_observations"],
         "scientific_observations": sci_res["scientific_observations"],
         "missing_artifacts": trial_inv["missing_artifacts"],
+        # Additive top-level key: recoveries that degraded evidence on this trial.
+        "diagnostics": merge_diagnostics(
+            (trial_inv.get("runtime") or {}).get("diagnostics"),
+            contract_res.get("diagnostics"),
+        ),
     }
     cand_hyps = generate_candidate_hypotheses(evidence)
     return evidence, norm_traj, contract_res, cand_hyps
@@ -202,6 +208,12 @@ def analyze_single_trial(
         skill_md = render_skill_prescription_markdown(analysis["skill_prescription"])
 
     return evidence, analysis, report_md, skill_md
+
+
+def _report_diagnostics(evidence: Dict[str, Any]) -> None:
+    """Emit one line per degraded-evidence record to stderr (never stdout)."""
+    for record in evidence.get("diagnostics") or []:
+        print(f"ANALYSIS DIAGNOSTIC: {format_diagnostic_line(record)}", file=sys.stderr)
 
 
 def write_outputs(
@@ -375,6 +387,7 @@ def main() -> None:
         inv = trials[0]
         if args.phase == "collect":
             ev, _, _, cand_hyps = collect_case_evidence(inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes)
+            _report_diagnostics(ev)
             write_outputs(args.output, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format)
         else:
             ev, an, rep, skill_md = analyze_single_trial(
@@ -383,6 +396,7 @@ def main() -> None:
                 max_log_bytes=args.max_log_bytes,
                 replay_mode=args.replay,
             )
+            _report_diagnostics(ev)
             write_outputs(args.output, ev, an, rep, skill_md, fmt=args.format)
     else:
         summary_rows = []
@@ -390,6 +404,7 @@ def main() -> None:
             t_out = args.output / inv["trial_name"]
             if args.phase == "collect":
                 ev, _, _, cand_hyps = collect_case_evidence(inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes)
+                _report_diagnostics(ev)
                 write_outputs(t_out, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format)
                 summary_rows.append(
                     {
@@ -407,6 +422,7 @@ def main() -> None:
                     max_log_bytes=args.max_log_bytes,
                     replay_mode=args.replay,
                 )
+                _report_diagnostics(ev)
                 write_outputs(t_out, ev, an, rep, skill_md, fmt=args.format)
                 summary_rows.append(
                     {

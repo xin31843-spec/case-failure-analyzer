@@ -48,6 +48,38 @@ class TestContractAudit(unittest.TestCase):
             self.assertIn("namelist_slash_truncation", hazard_subtypes)
             self.assertIn("scientific_notation_missing_d_exponent", hazard_subtypes)
 
+    def test_unparseable_verify_py_records_a_diagnostic(self) -> None:
+        """
+        An unparseable `tests/verify.py` silently yields no AST-derived hazards.
+        That recovery is correct, but it must be recorded: an empty hazard list
+        otherwise reads as "the verifier looks clean", which can let a verifier
+        defect fall through to an agent attribution.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp) / "tasks" / "broken-verifier"
+            (task_dir / "tests").mkdir(parents=True)
+            (task_dir / "tests" / "verify.py").write_text("def f(:\n", encoding="utf-8")
+
+            res = audit_contract(task_dir=task_dir, trial_dir=None)
+
+            codes = [d["code"] for d in res["diagnostics"]]
+            self.assertIn("VERIFIER_AST_PARSE_FAILED", codes)
+            record = next(d for d in res["diagnostics"] if d["code"] == "VERIFIER_AST_PARSE_FAILED")
+            self.assertEqual(record["severity"], "warning")
+            self.assertEqual(record["error_type"], "SyntaxError")
+            self.assertTrue(record["impact"], "diagnostic must state its causal impact")
+            self.assertLessEqual(len(record["error_message"]), 420)
+
+    def test_clean_verify_py_records_no_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp) / "tasks" / "clean-verifier"
+            (task_dir / "tests").mkdir(parents=True)
+            (task_dir / "tests" / "verify.py").write_text(
+                "import re\nVAL = re.compile(r'V=([\\d.]+)')\n", encoding="utf-8"
+            )
+            res = audit_contract(task_dir=task_dir, trial_dir=None)
+            self.assertEqual(res["diagnostics"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

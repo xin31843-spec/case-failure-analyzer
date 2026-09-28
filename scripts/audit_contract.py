@@ -16,6 +16,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from diagnostics import WARNING, make_diagnostic
+
 
 def extract_prompt_contract(instruction_text: str, task_dir: Optional[Path]) -> Dict[str, Any]:
     # 1. Extract code-block JSON keys under "values" / "units", or top-level JSON block / inline key declarations
@@ -213,15 +215,35 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
             "checked_keys": [],
             "regex_patterns": [],
             "hazards": [],
+            "diagnostics": [],
         }
 
     code_text = verify_py_path.read_text(encoding="utf-8", errors="replace")
     visitor = VerifierASTVisitor()
+    diagnostics: List[Dict[str, Any]] = []
     try:
         tree = ast.parse(code_text)
         visitor.visit(tree)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Recovery is correct (text-pattern hazards below still run), but the
+        # AST-derived hazards are now missing. Recording it matters because an
+        # empty hazard list otherwise reads as "the verifier looks clean".
+        diagnostics.append(
+            make_diagnostic(
+                stage="audit_contract.inspect_verifier_code",
+                code="VERIFIER_AST_PARSE_FAILED",
+                severity=WARNING,
+                message="tests/verify.py could not be parsed; AST-derived parser hazards were not collected.",
+                source_ref="task:tests/verify.py",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                impact=(
+                    "Gate 3 sees no AST-derived parser hazard, so a genuine verifier "
+                    "defect may go unattributed and the failure can fall through to "
+                    "an agent attribution."
+                ),
+            )
+        )
 
     hazards: List[Dict[str, str]] = []
 
@@ -278,6 +300,7 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
         "checked_keys": visitor.checked_keys,
         "regex_patterns": visitor.regex_patterns,
         "hazards": hazards,
+        "diagnostics": diagnostics,
     }
 
 
@@ -517,8 +540,27 @@ def audit_contract(
                     try:
                         if re.search(prefix_part + r"[-+]?\d+\.\d+[Dd][+-]\d+", verify_log_text):
                             prefix_matched_d_string = True
-                    except re.error:
-                        pass
+                    except re.error as exc:
+                        # The verifier's own regex prefix is not re-usable as a pattern.
+                        # Keeping `prefix_matched_d_string` False is the safe default
+                        # (it withholds a `direct` binding rather than inventing one),
+                        # but it means the hazard cannot be bound this way.
+                        diagnostics.append(
+                            make_diagnostic(
+                                stage="audit_contract.bind_hazards",
+                                code="VERIFIER_PREFIX_REGEX_FAILED",
+                                severity=WARNING,
+                                message="The verifier regex prefix could not be composed into a probe pattern.",
+                                source_ref="task:tests/verify.py",
+                                error_type=type(exc).__name__,
+                                error_message=str(exc),
+                                impact=(
+                                    "A D-exponent parser hazard cannot be bound directly to the "
+                                    "failure through this route, so Gate 3 may abstain."
+                                ),
+                                context={"affected_parser": affected_parser},
+                            )
+                        )
 
             # Exclude cases where verify.log explicitly says agent's parsed value (e.g. `9.99E+02`) != reference `1.23D+03`
             agent_wrote_different_e_value = bool(
@@ -556,6 +598,7 @@ def audit_contract(
         "verifier_contract": verifier_info,
         "contract_observations": contract_observations,
         "verifier_observations": verifier_observations,
+        "diagnostics": list((verifier_info or {}).get("diagnostics") or []),
     }
 
 
