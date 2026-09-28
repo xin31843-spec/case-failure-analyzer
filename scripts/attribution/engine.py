@@ -72,7 +72,23 @@ def run_attribution_engine(
         result = gate(ctx)
         if result is None:
             continue
-        return make_attribution(**result)
+
+        analysis = make_attribution(**result)
+        # The gate that matched is whichever one recorded last, so the engine does
+        # not keep a parallel registry of gate ids that could drift out of sync.
+        last = ctx.trace.evaluated[-1]
+        prc = analysis.get("primary_root_cause") or {}
+        ctx.trace.select(
+            gate_id=last["gate_id"],
+            subcase_id=last.get("subcase_id"),
+            category=prc.get("category"),
+            code=prc.get("code"),
+            verdict=analysis.get("verdict"),
+            failure_stage=analysis.get("failure_stage"),
+        )
+        # Appended last so the first 15 keys keep the canonical contract order.
+        analysis["decision_trace"] = ctx.trace.to_dict()
+        return analysis
 
     raise RuntimeError(
         "attribution engine exhausted every gate without a match; gate6 must "

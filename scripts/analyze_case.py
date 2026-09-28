@@ -145,6 +145,11 @@ def build_causal_attribution(
             result.get("competing_hypotheses") or [],
             cand_hyps,
         )
+        # Record that the gate's hypothesis list was post-processed after it
+        # returned, so the trace does not imply the gate emitted it directly.
+        trace = result.get("decision_trace")
+        if isinstance(trace, dict):
+            trace["reconciled_competing_hypotheses"] = True
     return result
 
 

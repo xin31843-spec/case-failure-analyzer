@@ -264,7 +264,29 @@ def validate_all(
             f"SKILL_PRESCRIPTION_POLICY violation: skill_prescription generated for category={cat!r} (only allowed for 'agent')."
         )
 
-    # 8. Optional report.md section & non-empty body validation
+    # 8. Optional `decision_trace` shape check.
+    #    Deliberately NOT in REQUIRED_ANALYSIS_KEYS: the trace is additive, and a
+    #    model-authored or hand-edited analysis.json need not carry one. It is only
+    #    checked for shape when present, so a malformed trace cannot pass silently.
+    decision_trace = analysis.get("decision_trace")
+    if decision_trace is not None:
+        if not isinstance(decision_trace, dict):
+            errors.append(
+                f"decision_trace must be an object when present, got {type(decision_trace).__name__}."
+            )
+        else:
+            evaluated = decision_trace.get("evaluated")
+            if not isinstance(evaluated, list):
+                errors.append("decision_trace.evaluated must be a list when decision_trace is present.")
+            else:
+                for idx, entry in enumerate(evaluated):
+                    if not isinstance(entry, dict) or not entry.get("gate_id"):
+                        errors.append(
+                            f"decision_trace.evaluated[{idx}] must be an object carrying a `gate_id`."
+                        )
+                        break
+
+    # 9. Optional report.md section & non-empty body validation
     if report_text is not None:
         errors.extend(validate_report_sections(report_text))
 
