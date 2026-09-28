@@ -11,7 +11,7 @@ the `failure-analysis-v1` schema and enforces hard causal attribution rules:
   4. Every `evidence_ref` in `analysis.json` (and inside `competing_hypotheses` /
      `first_unrecovered_deviation`) must resolve to a valid entry in `evidence.json`.
   5. Non-agent root causes cannot generate a `skill_prescription`.
-  6. `report.md` must include all 11 mandatory `## <N>. <Title>` sections with non-empty body text.
+  6. `report.md` must include all 4 mandatory `## <N>. <Title>` sections with non-empty body text.
 """
 from __future__ import annotations
 
@@ -59,19 +59,13 @@ REQUIRED_ANALYSIS_KEYS = {
 }
 
 VALID_CATEGORIES = {"infra", "case", "agent", "verifier", "numerical", "unknown", "none"}
+VALID_VERDICTS = {"passed", "failed", "errored", "unknown"}
 
 REQUIRED_REPORT_SECTIONS = [
-    (1, "Executive Summary"),
-    (2, "Case 状态"),
-    (3, "执行时间线"),
-    (4, "直接失败现象"),
-    (5, "主根因"),
-    (6, "伴随因素"),
-    (7, "证据链"),
-    (8, "排除的假设"),
-    (9, "建议修复责任方"),
-    (10, "Skill 处方"),
-    (11, "缺失证据与分析限制"),
+    (1, "诊断结论与运行态概览", "Verdict & Root Cause Summary"),
+    (2, "故障现场与因果证据链", "Failure Manifestation & Evidence Chain"),
+    (3, "竞争假设裁决与伴随信号", "Hypothesis Audit & Signals"),
+    (4, "修复行动与处方建议", "Recommended Actions & Notes"),
 ]
 
 
@@ -101,6 +95,8 @@ def collect_valid_evidence_ids(evidence: Dict[str, Any]) -> Set[str]:
     for s in evidence.get("scientific_observations") or []:
         if s.get("sci_id"):
             ids.add(s["sci_id"])
+        if s.get("source_ref"):
+            ids.add(str(s["source_ref"]))
     return ids
 
 
@@ -123,15 +119,15 @@ def collect_positive_agent_evidence_ids(evidence: Dict[str, Any]) -> Set[str]:
 
 def validate_report_sections(report_text: str) -> List[str]:
     errors: List[str] = []
-    for num, sec_title in REQUIRED_REPORT_SECTIONS:
-        # Match start-of-line `## <num>. <sec_title>` (optionally followed by English title or whitespace)
+    for num, zh_title, en_title in REQUIRED_REPORT_SECTIONS:
+        # Match start-of-line `## <num>. <zh_title>` or `## <num>. <en_title>`
         header_pat = re.compile(
-            rf"(?m)^##\s+{num}\.\s+{re.escape(sec_title)}(?:\s.*)?$"
+            rf"(?m)^##\s+{num}\.\s+(?:{re.escape(zh_title)}|{re.escape(en_title)})(?:\s.*)?$"
         )
         m = header_pat.search(report_text)
         if not m:
             errors.append(
-                f"report.md missing required section header: '## {num}. {sec_title}'"
+                f"report.md missing required section header: '## {num}. {zh_title}' (or '## {num}. {en_title}')"
             )
             continue
 
@@ -141,7 +137,7 @@ def validate_report_sections(report_text: str) -> List[str]:
         body = after_header[: next_h2.start()] if next_h2 else after_header
         if not body.strip():
             errors.append(
-                f"report.md section '## {num}. {sec_title}' has empty body content."
+                f"report.md section '## {num}. {zh_title}' has empty body content."
             )
     return errors
 
@@ -169,10 +165,17 @@ def validate_all(
         )
 
     verdict = analysis.get("verdict")
+    if verdict not in VALID_VERDICTS:
+        errors.append(f"Invalid verdict: {verdict!r}; must be one of {sorted(VALID_VERDICTS)}")
+
     prc = analysis.get("primary_root_cause") or {}
     cat = prc.get("category")
     if cat not in VALID_CATEGORIES:
         errors.append(f"Invalid primary_root_cause.category: {cat!r}")
+    elif verdict in ("failed", "errored") and cat == "none":
+        errors.append("Failed/errored analysis cannot have primary_root_cause.category='none'")
+    elif verdict == "passed" and cat != "none":
+        errors.append(f"Passed analysis must have primary_root_cause.category='none', got {cat!r}")
 
     conf = prc.get("confidence")
     if not isinstance(conf, (int, float)) or not (0.0 <= float(conf) <= 1.0):
@@ -275,11 +278,19 @@ def main() -> None:
     parser.add_argument("--report", required=False, type=Path, default=None, help="Optional path to report.md")
     args = parser.parse_args()
 
+    if not args.evidence.is_file():
+        print(f"ERROR: --evidence file does not exist: {args.evidence}", file=sys.stderr)
+        sys.exit(2)
+    if not args.analysis.is_file():
+        print(f"ERROR: --analysis file does not exist: {args.analysis}", file=sys.stderr)
+        sys.exit(2)
+    if args.report is not None and not args.report.is_file():
+        print(f"ERROR: --report file does not exist: {args.report}", file=sys.stderr)
+        sys.exit(2)
+
     evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
     analysis = json.loads(args.analysis.read_text(encoding="utf-8"))
-    report_text = (
-        args.report.read_text(encoding="utf-8") if (args.report and args.report.is_file()) else None
-    )
+    report_text = args.report.read_text(encoding="utf-8") if args.report is not None else None
 
     ok, errors = validate_all(evidence, analysis, report_text)
     if not ok:

@@ -34,7 +34,7 @@ from extract_scientific_errors import extract_scientific_errors
 from generate_hypotheses import generate_candidate_hypotheses
 from normalize_trajectory import normalize_trajectory
 from render_report import render_report_markdown, render_skill_prescription_markdown
-from runtime_state import SCHEMA_VERSION
+from runtime_state import SCHEMA_VERSION, resolve_trajectory_path
 from validate_analysis import validate_all
 
 
@@ -65,7 +65,7 @@ def collect_case_evidence(
     trial_dir = Path(trial_inv["trial_dir"]) if trial_inv.get("trial_dir") else None
     task_dir = Path(trial_inv["task_dir"]) if trial_inv.get("task_dir") else None
 
-    traj_path = trial_dir / "agent" / "trajectory.json" if trial_dir else None
+    traj_path = resolve_trajectory_path(trial_dir)
     norm_traj = normalize_trajectory(traj_path, max_obs_bytes=max(1500, max_log_bytes // 40))
 
     runtime_err_res = extract_runtime_errors(
@@ -376,7 +376,10 @@ def _build_raw_causal_attribution(
             ev_refs.append("ver:fail_log")
 
         # Check if downstream verifier defects also co-occurred so neither is silently dropped
-        co_verifier_defects = [c for c in contracts if c.get("alignment") == "verifier_defect"]
+        co_verifier_defects = [
+            c for c in contracts
+            if c.get("alignment") in ("verifier_defect", "verifier_hidden_requirement", "verifier_schema_mismatch")
+        ]
         co_triggered_hazards = [
             v for v in verifier_obs
             if v.get("triggered") and v.get("failure_binding") == "direct"
@@ -484,7 +487,10 @@ def _build_raw_causal_attribution(
 
     # ── Gate 3: Verifier Internal Crashes, Parser Defects & Hidden Contracts (`verifier`) ──
     verifier_crashes = [v for v in verifier_obs if v.get("type") == "verifier_internal_crash"]
-    verifier_defects = [c for c in contracts if c.get("alignment") == "verifier_defect"]
+    verifier_defects = [
+        c for c in contracts
+        if c.get("alignment") in ("verifier_defect", "verifier_hidden_requirement", "verifier_schema_mismatch")
+    ]
     triggered_hazards = [
         v for v in verifier_obs
         if v.get("triggered") and v.get("failure_binding") == "direct" and v.get("type") != "verifier_internal_crash"
@@ -500,12 +506,20 @@ def _build_raw_causal_attribution(
             subtype = vc.get("subtype", "recompute_defect")
             summary = vc["summary"]
         else:
+            is_schema_mismatch = bool(vd and vd.get("alignment") == "verifier_schema_mismatch")
             is_regex_defect = bool(
                 (th and th.get("type") == "parser_hazard")
                 or (vd and "namelist" in vd.get("item", ""))
             )
-            code = "VERIFIER_REGEX_OR_PARSER_DEFECT" if is_regex_defect else "VERIFIER_HIDDEN_CONTRACT"
-            subtype = "regex_or_parser_defect" if is_regex_defect else "hidden_contract"
+            if is_schema_mismatch:
+                code = "VERIFIER_SCHEMA_MISMATCH"
+                subtype = "schema_mismatch"
+            elif is_regex_defect:
+                code = "VERIFIER_REGEX_OR_PARSER_DEFECT"
+                subtype = "regex_or_parser_defect"
+            else:
+                code = "VERIFIER_HIDDEN_CONTRACT"
+                subtype = "hidden_contract"
             summary = (
                 vd["details"]
                 if vd
@@ -581,7 +595,7 @@ def _build_raw_causal_attribution(
         )
 
         return {
-            "schema_version": "failure-analysis-v1",
+            "schema_version": SCHEMA_VERSION,
             "case_id": case_id,
             "trial_name": trial_name,
             "verdict": "failed",
@@ -717,15 +731,18 @@ def _build_raw_causal_attribution(
         }
 
     # ── Gate 5: Positive Agent Evidence Check vs Calibrated `unknown` ─────────
+    unrecovered_sci_obs = [s for s in sci_obs if not s.get("recovered", False)]
+    recovered_sci_obs = [s for s in sci_obs if s.get("recovered", False)]
     repeated_fail_sigs = [s for s in signals if s["signal_type"] == "repeated_failed_action"]
     dep_search_sigs = [s for s in signals if s["signal_type"] == "dependency_search_attempted"]
     premature_sigs = [s for s in signals if s["signal_type"] == "premature_completion"]
     agent_mismatch_contracts = [c for c in contracts if c.get("alignment") == "agent_mismatch"]
     agent_timeline_events = [ev for ev in timeline if ev.get("actor") == "agent"]
 
-    # Check if there is positive evidence implicating Agent actions/decisions
+    # Check if there is positive UNRECOVERED evidence implicating Agent actions/decisions
+    # (Never blame the Agent merely because an earlier SCF/solver error appeared if it was subsequently recovered!)
     has_positive_agent_evidence = bool(
-        sci_obs
+        unrecovered_sci_obs
         or repeated_fail_sigs
         or premature_sigs
         or agent_mismatch_contracts
@@ -740,11 +757,27 @@ def _build_raw_causal_attribution(
         avail_refs = []
         if fail_log_obs:
             avail_refs.append("ver:fail_log")
+        for s in recovered_sci_obs[:1]:
+            avail_refs.append(s["sci_id"])
         for a in evidence["artifacts"]:
             if a["exists"] and len(avail_refs) < 2:
                 avail_refs.append(a["artifact_id"])
         if not avail_refs and evidence["artifacts"]:
             avail_refs = [evidence["artifacts"][0]["artifact_id"]]
+
+        excluded_hyps = []
+        if recovered_sci_obs:
+            s0 = recovered_sci_obs[0]
+            excluded_hyps.append(
+                {
+                    "hypothesis_id": "H_SCI_RECOVERED",
+                    "category": "agent",
+                    "reason": (
+                        f"Earlier `{s0['error_family']}` ({s0['software']}) at `{s0['source_ref']}` was recovered by "
+                        f"subsequent successful simulation execution (`{s0.get('recovery_event_ref')}`); not the cause of final failure."
+                    ),
+                }
+            )
 
         prc = attach_confidence_metadata(
             {
@@ -752,7 +785,7 @@ def _build_raw_causal_attribution(
                 "subtype": "insufficient_evidence",
                 "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
                 "summary": (
-                    "Available logs and trajectory events do not provide positive causal evidence "
+                    "Available logs and trajectory events do not provide positive unrecovered causal evidence "
                     "to attribute the failure to Agent decisions, Verifier defects, or Infrastructure."
                 ),
             },
@@ -780,7 +813,7 @@ def _build_raw_causal_attribution(
             "contributing_factors": [],
             "competing_hypotheses": cand_hyps["candidate_hypotheses"],
             "evidence_refs": avail_refs,
-            "excluded_hypotheses": [],
+            "excluded_hypotheses": excluded_hyps,
             "recommended_actions": [
                 {
                     "owner": "Infra",
@@ -792,7 +825,7 @@ def _build_raw_causal_attribution(
 
     # Positive Agent Evidence Attribution
     ev_refs = []
-    for s in sci_obs:
+    for s in unrecovered_sci_obs:
         ev_refs.append(s["sci_id"])
     for sig in signals[:3]:
         ev_refs.append(sig["signal_id"])
@@ -803,9 +836,9 @@ def _build_raw_causal_attribution(
     if fail_log_obs:
         ev_refs.append("ver:fail_log")
 
-    # Subcase 5a: Repeated failed action after scientific software error (e.g. SCF nonconvergence)
-    if sci_obs and repeated_fail_sigs:
-        first_sci = sci_obs[0]
+    # Subcase 5a: Repeated failed action after unrecovered scientific software error (e.g. SCF nonconvergence)
+    if unrecovered_sci_obs and repeated_fail_sigs:
+        first_sci = unrecovered_sci_obs[0]
         rep_sig = repeated_fail_sigs[0]
         subtype = "error_diagnosis"
         code = "AGENT_ERROR_DIAGNOSIS"
@@ -834,7 +867,7 @@ def _build_raw_causal_attribution(
                 "evidence_cases": [f"{case_id}:{fud_ref}"],
             }
         }
-    # Subcase 5b: Missing file/dependency discovery when file exists in container (`/opt/...` or `/workspace/assets/`)
+    # Subcase 5b: Missing file/dependency/checkpoint discovery when file exists in container (`/opt/...` or `/workspace/assets/`)
     elif (
         any(
             _matches_family(
@@ -843,29 +876,52 @@ def _build_raw_causal_attribution(
                     "basis_or_potential_missing",
                     "pseudopotential_read_failure",
                     "pseudopotential_mismatch_or_missing",
+                    "potcar_psp_element_mismatch",
+                    "checkpoint_architecture_incompatibility",
+                    "missing_forcefield_parameters",
+                    "basis_set_linear_dependence",
                 ),
             )
-            for s in sci_obs
+            for s in unrecovered_sci_obs
         )
         and not dep_search_sigs
     ):
-        first_sci = sci_obs[0]
+        first_sci = next(
+            s
+            for s in unrecovered_sci_obs
+            if _matches_family(
+                s,
+                (
+                    "basis_or_potential_missing",
+                    "pseudopotential_read_failure",
+                    "pseudopotential_mismatch_or_missing",
+                    "potcar_psp_element_mismatch",
+                    "checkpoint_architecture_incompatibility",
+                    "missing_forcefield_parameters",
+                    "basis_set_linear_dependence",
+                ),
+            )
+        )
         subtype = "path_or_dependency_discovery"
         code = "AGENT_PATH_OR_DEPENDENCY_DISCOVERY"
         summary = (
-            f"Simulation failed with `{first_sci['error_family']}` because agent did not search container directories "
-            "(`/opt/` or `/workspace/assets/`) to locate or symlink existing basis/potential files."
+            f"Simulation failed with `{first_sci['error_family']}` ({first_sci['software']}) because agent did not search "
+            "container directories (`/opt/` or `/workspace/assets/`) or resolve model/potential/force-field paths."
         )
-        fud_ref = first_sci["source_ref"]
+        fud_ref = (
+            first_sci["source_ref"]
+            if str(first_sci.get("source_ref", "")).startswith(("trajectory:", "art:"))
+            else first_sci["sci_id"]
+        )
         skill_prescription = None
     # Subcase 5c: Continuation / state-preservation parameter mismatch
     elif any(
         _matches_family(s, ("restart_or_timestep_continuation_mismatch", "restart_continuation_divergence"))
-        for s in sci_obs
+        for s in unrecovered_sci_obs
     ):
         first_sci = next(
             s
-            for s in sci_obs
+            for s in unrecovered_sci_obs
             if _matches_family(s, ("restart_or_timestep_continuation_mismatch", "restart_continuation_divergence"))
         )
         subtype = "scientific_parameter_selection"
@@ -874,7 +930,7 @@ def _build_raw_causal_attribution(
             f"Simulation continuation failed `{first_sci['error_family']}` ({first_sci['software']}) "
             f"due to altered state/parameter continuation settings ({', '.join(first_sci['candidate_causes'][:2])})."
         )
-        fud_ref = timeline[-1]["event_id"] if timeline else first_sci["source_ref"]
+        fud_ref = timeline[-1]["event_id"] if timeline else first_sci["sci_id"]
         skill_prescription = {
             "recommended_skill": {
                 "name": f"{first_sci['software']}-{first_sci['error_family'].replace('_', '-')}-protocol",
@@ -891,6 +947,40 @@ def _build_raw_causal_attribution(
                 ],
                 "anti_patterns": [
                     "Do not reset state counters or re-initialize ensembles when deterministic continuation is required."
+                ],
+                "evidence_cases": [f"{case_id}:{fud_ref}"],
+            }
+        }
+    # Subcase 5c-ext: Any other unrecovered domain scientific / MLIP / numerical solver error family observed
+    elif unrecovered_sci_obs:
+        first_sci = unrecovered_sci_obs[0]
+        subtype = "scientific_parameter_selection"
+        code = "AGENT_SCIENTIFIC_PARAMETER_SELECTION"
+        summary = (
+            f"Domain solver/model emitted `{first_sci['error_family']}` (`{first_sci['software']}`: `{first_sci['matched_text'][:100]}`), "
+            f"indicating an unrecovered scientific setup or model configuration issue ({', '.join(first_sci['candidate_causes'][:2])})."
+        )
+        fud_ref = (
+            first_sci["source_ref"]
+            if str(first_sci.get("source_ref", "")).startswith(("trajectory:", "art:"))
+            else first_sci["sci_id"]
+        )
+        skill_prescription = {
+            "recommended_skill": {
+                "name": f"{first_sci['software']}-{first_sci['error_family'].replace('_', '-')}-guidance",
+                "trigger": [
+                    f"`{first_sci['software']}` workflow encounters `{first_sci['error_family']}`",
+                    f"Diagnostic signature: `{first_sci['matched_text'][:80]}`",
+                ],
+                "capability_gap": [
+                    f"Agent lacked domain recovery protocol for `{first_sci['software']}:{first_sci['error_family']}`."
+                ],
+                "required_guidance": [
+                    f"Audit discriminating evidence: {', '.join(first_sci['required_discriminating_evidence'][:2])}.",
+                    f"Remediate candidate causes: {', '.join(first_sci['candidate_causes'][:3])}.",
+                ],
+                "anti_patterns": [
+                    f"Do not ignore `{first_sci['error_family']}` warnings or proceed with unconverged/unstable `{first_sci['software']}` states."
                 ],
                 "evidence_cases": [f"{case_id}:{fud_ref}"],
             }
@@ -955,7 +1045,7 @@ def _build_raw_causal_attribution(
     )
 
     return {
-        "schema_version": "failure-analysis-v1",
+        "schema_version": SCHEMA_VERSION,
         "case_id": case_id,
         "trial_name": trial_name,
         "verdict": "failed",
@@ -1038,9 +1128,16 @@ def write_outputs(
         (out_dir / "evidence.json").write_text(
             json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        if cand_hyps is not None:
+        effective_cand_hyps = cand_hyps
+        if effective_cand_hyps is None and analysis is not None:
+            effective_cand_hyps = {
+                "case_id": evidence.get("case_id"),
+                "trial_name": evidence.get("trial_name"),
+                "candidate_hypotheses": analysis.get("competing_hypotheses") or [],
+            }
+        if effective_cand_hyps is not None:
             (out_dir / "candidate-hypotheses.json").write_text(
-                json.dumps(cand_hyps, indent=2, ensure_ascii=False), encoding="utf-8"
+                json.dumps(effective_cand_hyps, indent=2, ensure_ascii=False), encoding="utf-8"
             )
         if analysis is not None:
             (out_dir / "analysis.json").write_text(
@@ -1054,8 +1151,52 @@ def write_outputs(
         (out_dir / "report.en.md").write_text(
             render_report_markdown(evidence, analysis, lang="en"), encoding="utf-8"
         )
-        if skill_md:
+        sp = analysis.get("skill_prescription")
+        if skill_md and sp:
             (out_dir / "skill-prescription.md").write_text(skill_md, encoding="utf-8")
+            (out_dir / "skill-prescription.zh.md").write_text(
+                render_skill_prescription_markdown(sp, lang="zh"), encoding="utf-8"
+            )
+            (out_dir / "skill-prescription.en.md").write_text(
+                render_skill_prescription_markdown(sp, lang="en"), encoding="utf-8"
+            )
+
+
+def compute_batch_statistics(summary_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute Stage 10 batch-level aggregation statistics across trials."""
+    verdict_counts: Dict[str, int] = {}
+    stage_counts: Dict[str, int] = {}
+    category_counts: Dict[str, int] = {}
+    code_counts: Dict[str, int] = {}
+    agent_started_count = 0
+    verifier_started_count = 0
+
+    for row in summary_rows:
+        v = str(row.get("verdict") or "unknown")
+        verdict_counts[v] = verdict_counts.get(v, 0) + 1
+        if row.get("agent_started"):
+            agent_started_count += 1
+        if row.get("verifier_started"):
+            verifier_started_count += 1
+        st = row.get("failure_stage")
+        if st:
+            stage_counts[st] = stage_counts.get(st, 0) + 1
+        cat = row.get("category")
+        if cat:
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        code = row.get("code")
+        if code:
+            code_counts[code] = code_counts.get(code, 0) + 1
+
+    return {
+        "total_trials": len(summary_rows),
+        "agent_started_count": agent_started_count,
+        "verifier_started_count": verifier_started_count,
+        "verdict_counts": verdict_counts,
+        "failure_stage_counts": stage_counts,
+        "category_counts": category_counts,
+        "root_cause_code_counts": dict(sorted(code_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+    }
 
 
 def main() -> None:
@@ -1080,6 +1221,12 @@ def main() -> None:
             "or 'all' (default: full evidence pipeline + conservative attribution + bilingual report)"
         ),
     )
+    parser.add_argument(
+        "--replay",
+        choices=["none", "verifier", "safe"],
+        default="none",
+        help="Verifier/simulation replay mode (only 'none' is supported for static read-only analysis)",
+    )
     parser.add_argument("--max-log-bytes", type=int, default=120000, help="Maximum bytes per log file read")
     parser.add_argument("--include-session-files", action="store_true", help="Include agent session files in inventory")
     parser.add_argument(
@@ -1090,7 +1237,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Fail fast on bad input paths instead of emitting a confident-but-meaningless report.
+    # Fail fast on bad input paths or unsupported replay modes before writing any output.
+    if args.replay != "none":
+        try:
+            run_isolated_verifier_replay(args.task, args.job)
+        except ReplayNotSupportedError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(2)
     if not args.job.exists():
         print(f"ERROR: --job path does not exist: {args.job}", file=sys.stderr)
         sys.exit(2)
@@ -1138,9 +1291,9 @@ def main() -> None:
                 inv,
                 job_dir=job_dir,
                 max_log_bytes=args.max_log_bytes,
+                replay_mode=args.replay,
             )
-            cand_hyps = generate_candidate_hypotheses(ev)
-            write_outputs(args.output, ev, an, rep, skill_md, cand_hyps=cand_hyps, fmt=args.format)
+            write_outputs(args.output, ev, an, rep, skill_md, fmt=args.format)
     else:
         summary_rows = []
         for inv in trials:
@@ -1152,6 +1305,8 @@ def main() -> None:
                     {
                         "trial_name": inv["trial_name"],
                         "verdict": ev["runtime"].get("verdict"),
+                        "agent_started": bool(ev["runtime"].get("agent_started")),
+                        "verifier_started": bool(ev["runtime"].get("verifier_started")),
                         "phase": "collect",
                     }
                 )
@@ -1160,21 +1315,34 @@ def main() -> None:
                     inv,
                     job_dir=job_dir,
                     max_log_bytes=args.max_log_bytes,
+                    replay_mode=args.replay,
                 )
-                cand_hyps = generate_candidate_hypotheses(ev)
-                write_outputs(t_out, ev, an, rep, skill_md, cand_hyps=cand_hyps, fmt=args.format)
+                write_outputs(t_out, ev, an, rep, skill_md, fmt=args.format)
                 summary_rows.append(
                     {
                         "trial_name": inv["trial_name"],
                         "verdict": an["verdict"],
+                        "agent_started": bool(ev["runtime"].get("agent_started")),
+                        "verifier_started": bool(ev["runtime"].get("verifier_started")),
+                        "failure_stage": an["failure_stage"],
+                        "detection_stage": an["detection_stage"],
                         "category": an["primary_root_cause"]["category"],
                         "code": an["primary_root_cause"]["code"],
                         "confidence": an["primary_root_cause"]["confidence"],
                     }
                 )
         args.output.mkdir(parents=True, exist_ok=True)
+        batch_stats = compute_batch_statistics(summary_rows)
         (args.output / "job_summary.json").write_text(
-            json.dumps({"job_dir": str(job_dir), "trials": summary_rows}, indent=2, ensure_ascii=False),
+            json.dumps(
+                {
+                    "job_dir": str(job_dir),
+                    "batch_statistics": batch_stats,
+                    "trials": summary_rows,
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
 

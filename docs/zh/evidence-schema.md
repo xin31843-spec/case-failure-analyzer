@@ -1,12 +1,14 @@
-# Evidence & Analysis JSON Schemas (`failure-analysis-v1`)
+# 证据与归因 JSON 模式规范 (`failure-analysis-v1`)
 
-## 1. `evidence.json` Schema
+**[English](../en/evidence-schema.md) | [简体中文](evidence-schema.md)**
 
-`evidence.json` stores purely objective observations extracted by deterministic scripts (`discover_artifacts.py`, `runtime_state.py`, `normalize_trajectory.py`, `extract_runtime_errors.py`, `audit_contract.py`, `extract_scientific_errors.py`). It must never contain subjective root-cause labels.
+## 1. `evidence.json` 客观证据模式
+
+`evidence.json` 仅存储由确定性脚本（`discover_artifacts.py`、`runtime_state.py`、`normalize_trajectory.py`、`extract_runtime_errors.py`、`audit_contract.py`、`extract_scientific_errors.py`）提取的客观事实与观测，绝不包含任何主观根因裁决标签。
 
 ```json
 {
-  "case_id": "string (e.g. ccb-cp2k-aimd-water or trial_name)",
+  "case_id": "string (例如 ccb-cp2k-aimd-water 或 trial_name)",
   "job_dir": "string",
   "task_dir": "string",
   "trial_name": "string",
@@ -21,8 +23,8 @@
     }
   ],
   "runtime": {
-    "started_at": "ISO-8601 or null",
-    "finished_at": "ISO-8601 or null",
+    "started_at": "ISO-8601 或 null",
+    "finished_at": "ISO-8601 或 null",
     "execution_status": "completed|errored|not_started|unknown",
     "verification_status": "passed|failed|not_run",
     "verdict": "passed|failed|errored|unknown",
@@ -45,9 +47,9 @@
       "actor": "user|agent|runner|verifier",
       "event_type": "user_instruction|agent_reasoning|tool_call|tool_output|shell_error|file_read|file_write|repeated_command|final_response|verifier_result|runtime_exception",
       "tool_name": "Bash|Read|Write|Edit|null",
-      "command": "string or null",
-      "observation": "truncated string or null",
-      "observation_sha256": "sha256:... or null",
+      "command": "string 或 null",
+      "observation": "截断后的观测字符串 或 null",
+      "observation_sha256": "sha256:... 或 null",
       "exit_code": 0,
       "source_file": "agent/trajectory.json",
       "source_pointer": "/steps/0"
@@ -57,7 +59,7 @@
     {
       "signal_id": "sig:repeated_fail:2:0",
       "signal_type": "repeated_failed_action|ignored_error|missing_log_inspection|unverified_output|premature_completion|wrong_output_path|asset_modified|dependency_search_attempted|scientific_parameter_changed|fallback_attempted",
-      "description": "string",
+      "description": "客观行为信号描述",
       "event_ref": "trajectory:step:2:tool:0"
     }
   ],
@@ -67,7 +69,7 @@
       "code": "INFRA_CONTAINER_BUILD",
       "subtype": "container_build",
       "stage": "environment_build",
-      "matched_text": "string",
+      "matched_text": "匹配的原始错误文本",
       "causal_candidate": true,
       "transient": false,
       "source_file": "result.json",
@@ -82,7 +84,7 @@
       "verifier_requirement": "required",
       "agent_output_status": "present",
       "alignment": "consistent|implicit_consistent|agent_missing_output|agent_schema_mismatch|verifier_hidden_requirement|verifier_schema_mismatch|verifier_defect|case_defect",
-      "details": "string",
+      "details": "三方契约比对详情",
       "source_refs": ["task:instruction.md", "task:tests/verify.py"]
     }
   ],
@@ -90,13 +92,13 @@
     {
       "obs_id": "ver:hazard:1",
       "type": "verifier_fail_message|parser_hazard|implicit_column_assumption|verifier_internal_crash",
-      "summary": "string",
-      "matched_text": "string",
+      "summary": "评测器观测摘要",
+      "matched_text": "匹配文本",
       "hazard_detected": true,
       "failure_binding": "direct|indirect|none",
       "binding_evidence": ["ver:fail_log"],
-      "affected_input": "string or null",
-      "affected_parser": "string or null",
+      "affected_input": "受影响输入文件 或 null",
+      "affected_parser": "受影响解析函数 或 null",
       "triggered": true,
       "source_file": "tests/verify.py",
       "source_pointer": "AST"
@@ -109,7 +111,7 @@
       "error_family": "scf_nonconvergence",
       "aliases": [],
       "reference_anchor": "references/software/cp2k.md#scf_nonconvergence",
-      "matched_text": "string",
+      "matched_text": "科学软件报错匹配片段",
       "source_ref": "trajectory:step:8",
       "candidate_causes": ["bad_initial_guess", "insufficient_scf_iterations"],
       "required_discriminating_evidence": ["SCF iteration history", "MAX_SCF setting"]
@@ -123,9 +125,9 @@
 
 ---
 
-## 2. `analysis.json` Schema
+## 2. `analysis.json` 因果归因模式
 
-`analysis.json` stores the structured causal attribution and must pass `scripts/validate_analysis.py`.
+`analysis.json` 存储结构化因果归因结论，必须通过 `scripts/validate_analysis.py` 校验。
 
 ```json
 {
@@ -137,13 +139,13 @@
   "detection_stage": "runner|verifier_execution|agent_execution",
   "first_unrecovered_deviation": {
     "status": "identified|not_identified",
-    "event_ref": "err:1 or null",
+    "event_ref": "err:1 或 null",
     "timestamp": "2026-09-18T21:45:37.672525",
-    "summary": "Docker image pull/build failed during environment setup before agent startup"
+    "summary": "在 Agent 启动前的环境准备阶段发生 Docker 镜像拉取/构建失败"
   },
   "failure_manifestation": {
     "type": "dependency_install_failure|verifier_check_failed|verifier_internal_crash|...",
-    "summary": "Human-readable description of the final failure symptom"
+    "summary": "最终失败表象的可读摘要说明"
   },
   "primary_root_cause": {
     "category": "infra|case|agent|verifier|numerical|unknown|none",
@@ -152,7 +154,7 @@
     "confidence": 0.86,
     "confidence_kind": "heuristic_evidence_score",
     "evidence_strength": "high|medium|low",
-    "summary": "Explanation of why this is the singular primary root cause"
+    "summary": "为何该项是唯一主根因的因果解释"
   },
   "contributing_factors": [],
   "competing_hypotheses": [
@@ -160,11 +162,11 @@
       "hypothesis_id": "H1",
       "category": "infra",
       "subtype": "external_network",
-      "claim": "Docker build failed due to network timeout/unreachability before agent started",
+      "claim": "Agent 启动前因网络超时/不可达导致 Docker 构建失败",
       "evidence_for": ["err:1"],
       "evidence_against": [],
       "missing_evidence": [],
-      "counterfactual_test": "Pre-pull image or build with working network mirror",
+      "counterfactual_test": "预先拉取基础镜像或配置可用镜像源后重新构建",
       "confidence": 0.86,
       "confidence_kind": "heuristic_evidence_score",
       "evidence_strength": "high"
@@ -175,13 +177,13 @@
     {
       "hypothesis_id": "H2",
       "category": "agent",
-      "reason": "Agent never started (runtime.agent_started == false); missing trajectory is a consequence of pre-startup build failure."
+      "reason": "Agent 根本未启动 (runtime.agent_started == false)；轨迹缺失是启动前构建失败的结果而非原因。"
     }
   ],
   "recommended_actions": [
     {
       "owner": "Infra|Case|Verifier|Agent Policy",
-      "action": "Concrete remediation step"
+      "action": "具体的修复行动建议"
     }
   ],
   "skill_prescription": null

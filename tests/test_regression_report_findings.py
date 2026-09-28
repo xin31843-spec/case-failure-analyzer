@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression test suite for the 12 verification findings in `/Users/hx/workspace/report.md`
+Regression test suite for verification and attribution findings
 (`tests/test_regression_report_findings.py`).
 """
 from __future__ import annotations
@@ -224,7 +224,7 @@ class TestReportRegressionFindings(unittest.TestCase):
             disc = discover_all(job_path=job_dir)
             ev, an, _, _ = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
 
-            fake_report = "Executive Summary / Case 状态 / 执行时间线 / 直接失败现象 / 主根因 / 伴随因素 / 证据链 / 排除的假设 / 建议修复责任方 / Skill 处方 / 缺失证据与分析限制"
+            fake_report = "诊断结论与运行态概览 / 故障现场与因果证据链 / 竞争假设裁决与伴随信号 / 修复行动与处方建议"
             ok, errs = validate_all(ev, an, fake_report)
             self.assertFalse(ok)
             self.assertTrue(any("missing required section header" in e for e in errs))
@@ -390,6 +390,276 @@ class TestReportRegressionFindings(unittest.TestCase):
         self.assertEqual(c3, round(3 / MAX_EVIDENCE_POINTS, 2))
         self.assertEqual(s3, "medium")
 
+    def test_19_standalone_zh_and_en_reports_and_timeline_windowing(self) -> None:
+        """Verify standalone report.zh.md and report.en.md pass 4-section validation and timeline windowing retains tail & deviation."""
+        from render_report import select_timeline_events
+        from validate_analysis import validate_report_sections
+
+        long_timeline = [
+            {"event_id": f"trajectory:step:{i}", "actor": "agent", "event_type": "tool_call"}
+            for i in range(1, 45)
+        ]
+        selected = select_timeline_events(long_timeline, fud_ref="trajectory:step:22", limit=15)
+        selected_ids = [e["event_id"] for e in selected]
+        self.assertEqual(len(selected), 15)
+        self.assertIn("trajectory:step:1", selected_ids)
+        self.assertIn("trajectory:step:22", selected_ids)
+        self.assertIn("trajectory:step:44", selected_ids)
+        # Ensure strict chronological ordering
+        step_nums = [int(eid.split(":")[-1]) for eid in selected_ids]
+        self.assertEqual(step_nums, sorted(step_nums))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp) / "jobs" / "bi-full-job"
+            trial_dir = job_dir / "trial_1"
+            trial_dir.mkdir(parents=True)
+            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            disc = discover_all(job_path=job_dir)
+            ev, an, rep, skill_md = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
+            out_dir = Path(tmp) / "out"
+            write_outputs(out_dir, ev, an, rep, skill_md)
+
+            zh_text = (out_dir / "report.zh.md").read_text(encoding="utf-8")
+            en_text = (out_dir / "report.en.md").read_text(encoding="utf-8")
+            self.assertEqual(validate_report_sections(zh_text), [])
+            self.assertEqual(validate_report_sections(en_text), [])
+            self.assertTrue((out_dir / "candidate-hypotheses.json").is_file())
+
+    def test_20_verifier_hidden_requirement_and_schema_mismatch_attribution(self) -> None:
+        """Verify verifier_hidden_requirement and verifier_schema_mismatch attribute to VERIFIER_* rather than blaming the agent."""
+        with tempfile.TemporaryDirectory() as tmp:
+            # Case A: Verifier checks extra hidden file secret_metric.json not mentioned in instruction.md
+            task_dir_a = Path(tmp) / "task_hidden_file"
+            (task_dir_a / "tests").mkdir(parents=True)
+            (task_dir_a / "instruction.md").write_text(
+                "Compute energy and write `results.json` with key `energy`.",
+                encoding="utf-8",
+            )
+            (task_dir_a / "tests" / "verify.py").write_text(
+                "import json\n"
+                "data = json.load(open('results.json'))\n"
+                "secret = json.load(open('secret_metric.json'))\n"
+                "assert 'energy' in data\n",
+                encoding="utf-8",
+            )
+            job_dir_a = Path(tmp) / "jobs" / "hidden-file-job"
+            trial_a = job_dir_a / "trial_1"
+            (trial_a / "agent").mkdir(parents=True)
+            (trial_a / "verifier").mkdir(parents=True)
+            (trial_a / "result.json").write_text(json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8")
+            (trial_a / "results.json").write_text(json.dumps({"energy": -10.5}), encoding="utf-8")
+            (trial_a / "verifier" / "reward.txt").write_text("0\n", encoding="utf-8")
+            (trial_a / "verifier" / "verify.log").write_text(
+                "FileNotFoundError: [Errno 2] No such file or directory: 'secret_metric.json'\n",
+                encoding="utf-8",
+            )
+            (trial_a / "agent" / "trajectory.jsonl").write_text(
+                json.dumps({"role": "assistant", "content": "Wrote results.json"}) + "\n",
+                encoding="utf-8",
+            )
+
+            disc_a = discover_all(job_path=job_dir_a, task_path=task_dir_a)
+            # Also verifies trajectory.jsonl is discovered as art:trajectory_json
+            art_ids_a = {a["artifact_id"] for a in disc_a["trials"][0]["artifacts"]}
+            self.assertIn("art:trajectory_json", art_ids_a)
+
+            ev_a, an_a, rep_a, _ = analyze_single_trial(disc_a["trials"][0], job_dir=job_dir_a)
+            self.assertEqual(an_a["primary_root_cause"]["code"], "VERIFIER_HIDDEN_CONTRACT")
+            self.assertEqual(an_a["primary_root_cause"]["category"], "verifier")
+            self.assertEqual(validate_all(ev_a, an_a, rep_a), (True, []))
+
+            # Case B: Verifier checks extra hidden key 'virial_stress' not mentioned in instruction.md
+            task_dir_b = Path(tmp) / "task_hidden_key"
+            (task_dir_b / "tests").mkdir(parents=True)
+            (task_dir_b / "instruction.md").write_text(
+                "Write `results.json` containing `total_energy`.",
+                encoding="utf-8",
+            )
+            (task_dir_b / "tests" / "verify.py").write_text(
+                "import json\n"
+                "data = json.load(open('results.json'))\n"
+                "assert data['virial_stress'] < 0.1\n",
+                encoding="utf-8",
+            )
+            job_dir_b = Path(tmp) / "jobs" / "hidden-key-job"
+            trial_b = job_dir_b / "trial_1"
+            (trial_b / "agent").mkdir(parents=True)
+            (trial_b / "verifier").mkdir(parents=True)
+            (trial_b / "result.json").write_text(json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8")
+            (trial_b / "results.json").write_text(json.dumps({"total_energy": -10.5}), encoding="utf-8")
+            (trial_b / "verifier" / "reward.txt").write_text("0\n", encoding="utf-8")
+            (trial_b / "verifier" / "verify.log").write_text(
+                "KeyError: 'virial_stress'\n",
+                encoding="utf-8",
+            )
+            (trial_b / "agent" / "trajectory.json").write_text(
+                json.dumps({"steps": [{"role": "assistant", "content": "Done"}]}),
+                encoding="utf-8",
+            )
+
+            disc_b = discover_all(job_path=job_dir_b, task_path=task_dir_b)
+            ev_b, an_b, rep_b, _ = analyze_single_trial(disc_b["trials"][0], job_dir=job_dir_b)
+            self.assertEqual(an_b["primary_root_cause"]["code"], "VERIFIER_SCHEMA_MISMATCH")
+            self.assertEqual(an_b["primary_root_cause"]["category"], "verifier")
+            self.assertEqual(validate_all(ev_b, an_b, rep_b), (True, []))
+
+    def test_21_cli_replay_and_missing_report_exit_codes(self) -> None:
+        """Verify --replay safe returns exit code 2 without partial writes and validate_analysis.py fails on missing --report."""
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp) / "jobs" / "cli-job"
+            trial_dir = job_dir / "trial_1"
+            trial_dir.mkdir(parents=True)
+            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            out_dir = Path(tmp) / "out_replay"
+
+            proc_replay = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "analyze_case.py"),
+                    "--job",
+                    str(job_dir),
+                    "--replay",
+                    "safe",
+                    "--output",
+                    str(out_dir),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc_replay.returncode, 2)
+            self.assertFalse(out_dir.exists())
+
+            # Run normal analysis to get valid evidence.json and analysis.json
+            out_valid = Path(tmp) / "out_valid"
+            proc_ok = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "analyze_case.py"),
+                    "--job",
+                    str(job_dir),
+                    "--output",
+                    str(out_valid),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc_ok.returncode, 0)
+
+            # Passing a non-existent --report path to validate_analysis.py must exit 2
+            proc_val = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "validate_analysis.py"),
+                    "--evidence",
+                    str(out_valid / "evidence.json"),
+                    "--analysis",
+                    str(out_valid / "analysis.json"),
+                    "--report",
+                    str(out_valid / "nonexistent_report.md"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc_val.returncode, 2)
+
+    def test_22_recovered_scf_error_does_not_blame_agent_and_batch_stats(self) -> None:
+        """Verify an SCF error recovered in a later trajectory step is NOT blamed as the root cause, and Stage 10 batch_statistics works."""
+        from analyze_case import compute_batch_statistics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp) / "jobs" / "recovered-scf-job"
+            trial_dir = job_dir / "trial_1"
+            (trial_dir / "agent").mkdir(parents=True)
+            (trial_dir / "verifier").mkdir(parents=True)
+            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8")
+            (trial_dir / "verifier" / "reward.txt").write_text("0\n", encoding="utf-8")
+            (trial_dir / "verifier" / "verify.log").write_text("Verification failed: unexpected post-processing condition\n", encoding="utf-8")
+
+            # Step 1: pw.x fails with SCF nonconvergence
+            # Step 2: Agent adjusts mixing_beta and re-runs pw.x -> exit_code 0, JOB DONE (recovered!)
+            traj = {
+                "schema_version": "ATIF-v1.7",
+                "steps": [
+                    {
+                        "step_id": 1,
+                        "source": "agent",
+                        "tool_calls": [
+                            {
+                                "tool_call_id": "c1",
+                                "function_name": "Bash",
+                                "arguments": {"command": "pw.x < scf.in > scf.out"},
+                            }
+                        ],
+                        "observation": {
+                            "results": [
+                                {
+                                    "source_call_id": "c1",
+                                    "content": "Exit code: 1\nconvergence NOT achieved after 100 iterations: stopping",
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "step_id": 2,
+                        "source": "agent",
+                        "tool_calls": [
+                            {
+                                "tool_call_id": "c2",
+                                "function_name": "Bash",
+                                "arguments": {"command": "pw.x < scf_fixed.in > scf.out"},
+                            }
+                        ],
+                        "observation": {
+                            "results": [
+                                {
+                                    "source_call_id": "c2",
+                                    "content": "Exit code: 0\n     convergence has been achieved in  18 iterations\n   JOB DONE.",
+                                }
+                            ]
+                        },
+                    },
+                ],
+            }
+            (trial_dir / "agent" / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+
+            disc = discover_all(job_path=job_dir)
+            ev, an, rep, _ = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
+
+            # The SCF error in step 1 must be marked recovered=True and MUST NOT be blamed as AGENT_SCIENTIFIC_PARAMETER_SELECTION
+            self.assertEqual(len(ev["scientific_observations"]), 1)
+            self.assertTrue(ev["scientific_observations"][0]["recovered"])
+            self.assertEqual(ev["scientific_observations"][0]["recovery_event_ref"], "trajectory:step:2:tool:0")
+            self.assertNotIn(
+                an["primary_root_cause"]["code"],
+                ("AGENT_SCIENTIFIC_PARAMETER_SELECTION", "AGENT_ERROR_DIAGNOSIS"),
+            )
+            self.assertEqual(an["primary_root_cause"]["code"], "AGENT_PREMATURE_TERMINATION")
+            self.assertEqual(validate_all(ev, an, rep), (True, []))
+
+            # Also verify Stage 10 batch_statistics computation
+            stats = compute_batch_statistics(
+                [
+                    {
+                        "trial_name": "trial_1",
+                        "verdict": an["verdict"],
+                        "agent_started": True,
+                        "verifier_started": True,
+                        "failure_stage": an["failure_stage"],
+                        "category": an["primary_root_cause"]["category"],
+                        "code": an["primary_root_cause"]["code"],
+                    }
+                ]
+            )
+            self.assertEqual(stats["total_trials"], 1)
+            self.assertEqual(stats["agent_started_count"], 1)
+            self.assertEqual(stats["verifier_started_count"], 1)
+            self.assertEqual(stats["verdict_counts"]["failed"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

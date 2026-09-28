@@ -57,8 +57,19 @@ def extract_exit_code_and_error(obs_text: str) -> Tuple[Optional[int], bool]:
         "Segmentation fault",
         "convergence NOT achieved",
         "NOT converged",
+        "SCF NOT CONVERGED",
         "cannot be opened",
         "Lost atoms",
+        "CUDA out of memory",
+        "RuntimeError:",
+        "LinAlgError:",
+        "ValueError:",
+        "KeyError:",
+        "Error EDDDAV",
+        "ZBRENT:",
+        "LINCS WARNING",
+        "link 9999",
+        "l502.exe",
     )
     if any(ind in obs_text for ind in error_indicators):
         return 1, True
@@ -79,6 +90,59 @@ def classify_tool_event(
             return "shell_error", cmd
         return "tool_call", cmd
     return "tool_call", json.dumps(args, ensure_ascii=False)[:200]
+
+
+def _parse_trajectory_payload(text: str) -> Dict[str, Any]:
+    """Parse standard ATIF JSON, JSON array of messages, or JSONL stream into a normalized dict."""
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict):
+            if "steps" not in parsed and isinstance(parsed.get("messages"), list):
+                parsed["steps"] = _convert_messages_to_steps(parsed["messages"])
+                parsed.setdefault("schema_version", "ATIF-v1.7")
+            return parsed
+        if isinstance(parsed, list):
+            return {"schema_version": "ATIF-v1.7", "steps": _convert_messages_to_steps(parsed)}
+    except Exception:
+        pass
+
+    # Fallback: try line-delimited JSONL
+    lines = [ln.strip() for ln in stripped.splitlines() if ln.strip()]
+    if lines:
+        objs = []
+        for ln in lines:
+            objs.append(json.loads(ln))
+        return {"schema_version": "ATIF-v1.7", "steps": _convert_messages_to_steps(objs)}
+    raise ValueError("Unable to parse trajectory file as JSON or JSONL")
+
+
+def _convert_messages_to_steps(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert generic OpenAI/Anthropic/JSONL message or step records into ATIF-compatible step dicts."""
+    steps: List[Dict[str, Any]] = []
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        if "tool_calls" in item or "observation" in item or "step_id" in item:
+            steps.append(item)
+            continue
+        role = item.get("role") or item.get("source") or "agent"
+        content = item.get("content")
+        if isinstance(content, list):
+            text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+            msg_str = "\n".join(t for t in text_parts if t)
+        else:
+            msg_str = str(content or item.get("message") or "")
+        steps.append(
+            {
+                "step_id": idx + 1,
+                "timestamp": item.get("timestamp") or item.get("created_at"),
+                "source": "user" if role in ("user", "system") else "agent",
+                "message": msg_str,
+                "tool_calls": item.get("tool_calls") or [],
+            }
+        )
+    return steps
 
 
 def normalize_trajectory(
@@ -111,7 +175,7 @@ def normalize_trajectory(
                 "written_files": [],
                 "read_files": [],
             }
-        raw = json.loads(trajectory_path.read_text(encoding="utf-8", errors="replace"))
+        raw = _parse_trajectory_payload(trajectory_path.read_text(encoding="utf-8", errors="replace"))
     except Exception as exc:
         return {
             "exists": True,
@@ -255,13 +319,51 @@ def normalize_trajectory(
 
                 if any(
                     bin_k in norm_cmd
-                    for bin_k in ("cp2k", "pw.x", "bands.x", "lmp", "lammps", "xtb")
+                    for bin_k in (
+                        "cp2k",
+                        "pw.x",
+                        "bands.x",
+                        "lmp",
+                        "lammps",
+                        "xtb",
+                        "vasp",
+                        "abacus",
+                        "orca",
+                        "g16",
+                        "g09",
+                        "pyscf",
+                        "psi4",
+                        "nwchem",
+                        "gmx",
+                        "mdrun",
+                        "pmemd",
+                        "sander",
+                        "openmm",
+                        "mace",
+                        "nequip",
+                        "deepmd",
+                        "dp ",
+                        "chgnet",
+                        "sevennet",
+                        "openfoam",
+                        "fenics",
+                    )
                 ):
                     ran_simulation = True
 
                 if any(
                     log_k in norm_cmd
-                    for log_k in (".out", "log.lammps", ".ener", "pwscf.xml")
+                    for log_k in (
+                        ".out",
+                        ".log",
+                        "log.lammps",
+                        ".ener",
+                        "pwscf.xml",
+                        "OUTCAR",
+                        "OSZICAR",
+                        "running_scf.log",
+                        "md.log",
+                    )
                 ) and any(r_k in norm_cmd for r_k in ("cat ", "head ", "tail ", "grep ", "python")):
                     inspected_sim_log = True
 

@@ -18,16 +18,24 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 def extract_prompt_contract(instruction_text: str, task_dir: Optional[Path]) -> Dict[str, Any]:
-    # 1. Extract code-block JSON keys under "values" / "units"
+    # 1. Extract code-block JSON keys under "values" / "units", or top-level JSON block / inline key declarations
     json_keys: List[str] = []
     for m in re.finditer(r"```json\s*(.*?)```", instruction_text, re.DOTALL):
         block = m.group(1)
         val_block = re.search(r'"values"\s*:\s*\{(.*?)\}', block, re.DOTALL)
-        if val_block:
-            for km in re.finditer(r'"([a-zA-Z0-9_]+)"\s*:', val_block.group(1)):
-                k = km.group(1)
-                if k not in json_keys:
-                    json_keys.append(k)
+        target_block = val_block.group(1) if val_block else block
+        for km in re.finditer(r'"([a-zA-Z0-9_]+)"\s*:', target_block):
+            k = km.group(1)
+            if k not in ("values", "units", "metadata") and k not in json_keys:
+                json_keys.append(k)
+    for km in re.finditer(
+        r"(?:with\s+key[s]?|key[s]?|field[s]?|containing)\s+`([a-zA-Z0-9_]+)`",
+        instruction_text,
+        re.IGNORECASE,
+    ):
+        k = km.group(1)
+        if "." not in k and k not in ("values", "units", "metadata") and k not in json_keys:
+            json_keys.append(k)
 
     # 2. Extract mentioned input assets in `/workspace/assets/...` or `assets/...`
     asset_refs: List[str] = []
@@ -88,6 +96,19 @@ class VerifierASTVisitor(ast.NodeVisitor):
         self.has_positional_split_index: bool = False
         self.indexed_split_snippets: List[str] = []
 
+    def _add_checked_file(self, raw_path: str) -> None:
+        cleaned = raw_path.strip()
+        if not cleaned or cleaned.startswith(("/tmp/", "/tests/", "/opt/", "/proc/", "/sys/")):
+            return
+        if cleaned.startswith("/workspace/"):
+            cleaned = cleaned[len("/workspace/") :]
+        elif cleaned.startswith("./"):
+            cleaned = cleaned[2:]
+        if cleaned in ("refs.json", "verify.py", "tests/refs.json", "tests/verify.py"):
+            return
+        if "." in Path(cleaned).name and cleaned not in self.checked_files:
+            self.checked_files.append(cleaned)
+
     def visit_Call(self, node: ast.Call) -> Any:
         func_name = ""
         if isinstance(node.func, ast.Attribute):
@@ -104,9 +125,12 @@ class VerifierASTVisitor(ast.NodeVisitor):
                     if isinstance(a, ast.Constant) and isinstance(a.value, str)
                 ]
                 if parts:
-                    rel = "/".join(parts)
-                    if rel not in self.checked_files:
-                        self.checked_files.append(rel)
+                    self._add_checked_file("/".join(parts))
+
+        if func_name in ("open", "Path") and node.args:
+            arg0 = node.args[0]
+            if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+                self._add_checked_file(arg0.value)
 
         if func_name in ("compile", "search", "match", "findall", "finditer") and node.args:
             arg0 = node.args[0]
@@ -134,6 +158,14 @@ class VerifierASTVisitor(ast.NodeVisitor):
             elif isinstance(node.value, ast.Name) and node.value.id in self.split_vars:
                 self.has_positional_split_index = True
                 self.indexed_split_snippets.append(f"{node.value.id}[{node.slice.value}]")
+        elif isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            key_cand = node.slice.value
+            if (
+                re.match(r"^[a-zA-Z0-9_]+$", key_cand)
+                and key_cand not in ("values", "units", "metadata", "results", "PATH", "HOME", "PYTHONPATH")
+                and key_cand not in self.checked_keys
+            ):
+                self.checked_keys.append(key_cand)
         self.generic_visit(node)
 
     def visit_For(self, node: ast.For) -> Any:
@@ -254,8 +286,10 @@ def audit_contract(
     trial_dir: Optional[Path],
     normalized_traj: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    from runtime_state import resolve_verifier_script_path
+
     instruction_path = task_dir / "instruction.md" if task_dir else None
-    verify_py_path = task_dir / "tests" / "verify.py" if task_dir else None
+    verify_py_path = resolve_verifier_script_path(task_dir)
     refs_json_path = task_dir / "tests" / "refs.json" if task_dir else None
 
     instruction_text = (
@@ -267,18 +301,20 @@ def audit_contract(
     verifier_info = inspect_verifier_code(verify_py_path)
 
     verify_log_text = ""
-    if trial_dir and (trial_dir / "verifier" / "verify.log").is_file():
-        verify_log_text = (
-            (trial_dir / "verifier" / "verify.log")
-            .read_text(encoding="utf-8", errors="replace")
-            .strip()
-        )
-    elif trial_dir and (trial_dir / "verifier" / "test-stdout.txt").is_file():
-        verify_log_text = (
-            (trial_dir / "verifier" / "test-stdout.txt")
-            .read_text(encoding="utf-8", errors="replace")
-            .strip()
-        )
+    if trial_dir:
+        for rel_vlog in (
+            "verifier/verify.log",
+            "verifier/test-stdout.txt",
+            "verifier/pytest.log",
+            "verifier/verifier.log",
+            "verify.log",
+        ):
+            vpath = trial_dir / rel_vlog
+            if vpath.is_file():
+                text_cand = vpath.read_text(encoding="utf-8", errors="replace").strip()
+                if text_cand:
+                    verify_log_text = text_cand
+                    break
 
     contract_observations: List[Dict[str, Any]] = []
     verifier_observations: List[Dict[str, Any]] = []
@@ -303,10 +339,18 @@ def audit_contract(
     # 2. Compare required files between Prompt and Verifier
     prompt_files = set(prompt_info["output_files"])
     for vfile in verifier_info["checked_files"]:
-        in_prompt = vfile in prompt_files or any(
-            vfile.endswith(pf) or pf.endswith(vfile) for pf in prompt_files
+        in_prompt = (
+            (not prompt_files)
+            or (vfile in prompt_files)
+            or any(vfile.endswith(pf) or pf.endswith(vfile) for pf in prompt_files)
         )
-        missing_in_verify = f"Missing: {vfile}" in verify_log_text
+        missing_in_verify = bool(
+            f"Missing: {vfile}" in verify_log_text
+            or (
+                vfile in verify_log_text
+                and re.search(r"(?:FileNotFoundError|No such file|not found|missing)", verify_log_text, re.IGNORECASE)
+            )
+        )
         status = "missing_at_verify" if missing_in_verify else "present"
         if not in_prompt:
             alignment = "verifier_hidden_requirement" if missing_in_verify else "implicit_consistent"
@@ -333,9 +377,17 @@ def audit_contract(
     prompt_keys = set(prompt_info["json_keys"])
     for vkey in verifier_info["checked_keys"]:
         in_prompt = (not prompt_keys) or (vkey in prompt_keys)
-        missing_key = f"missing key: {vkey}" in verify_log_text
+        missing_key = bool(
+            f"missing key: {vkey}" in verify_log_text
+            or f"KeyError: '{vkey}'" in verify_log_text
+            or f'KeyError: "{vkey}"' in verify_log_text
+            or (
+                vkey in verify_log_text
+                and re.search(r"(?:KeyError|missing key)", verify_log_text, re.IGNORECASE)
+            )
+        )
         if not in_prompt:
-            alignment = "verifier_schema_mismatch"
+            alignment = "verifier_schema_mismatch" if missing_key else "implicit_consistent"
         elif missing_key:
             alignment = "agent_mismatch"
         else:

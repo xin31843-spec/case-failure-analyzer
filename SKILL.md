@@ -5,16 +5,7 @@ metadata:
   short-description: Audit scientific benchmark case failures and root causes
 ---
 
-# Case Failure Analyzer (Scientific Case Failure Analyzer / 科学计算基准用例失败因果分析器)
-
-> **Canonical instructions are English.** The full Chinese specification lives in
-> [references/instructions.zh.md](references/instructions.zh.md); a condensed Chinese
-> summary is kept in [Part II](#part-ii-中文规范说明-chinese) below.
-> **规范以英文为准**；完整中文说明见 [references/instructions.zh.md](references/instructions.zh.md)。
-
----
-
-## Part I: English Specification
+# Case Failure Analyzer
 
 Use this skill when asked to diagnose why a scientific-computing benchmark case (`jobs/<job_name>` + `tasks/<task_name>`) failed.
 
@@ -30,7 +21,7 @@ Require or discover:
 ### Default Behavior & Boundaries
 
 - **Read-only by default**: Never modifies `tasks/`, `jobs/`, or `tests/verify.py`.
-- **Deterministic Evidence Extraction + Model Causal Reasoning**: Deterministic scripts extract `evidence.json` and `candidate-hypotheses.json`; the Agent/Codex evaluates competing hypotheses per `references/attribution-protocol.md` (or validates the conservative draft in `analysis.json`).
+- **Deterministic Evidence Extraction + Model Causal Reasoning**: Deterministic scripts extract `evidence.json` and `candidate-hypotheses.json`; the Agent evaluates competing hypotheses per `references/attribution-protocol.md` (or validates the conservative draft in `analysis.json`).
 - **Evidence-first attribution**: Never assigns a root cause from a single keyword match. Separates **failure manifestation (symptom)**, **detection stage**, and **primary root cause**.
 - **Positive-evidence gate for Agent blame**: Never defaults to `agent` when other gates do not fire. Requires positive agent evidence (`behavioral_signals`, `agent_mismatch` contract, or agent-caused `scientific_observations`).
 - **Calibrated uncertainty**: Outputs `unknown` (`UNKNOWN_INSUFFICIENT_EVIDENCE`) when evidence cannot distinguish competing hypotheses.
@@ -107,40 +98,24 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/render
 
 ---
 
-## Part II: 中文规范说明 (Chinese)
+## References
 
-> 完整中文规范（输入参数、默认边界、核心工作流、归因约束全文）见
-> [references/instructions.zh.md](references/instructions.zh.md)。
-> `SKILL.md` 仅保留英文 canonical 说明与本节摘要，以避免同一规范中英双份重复占用上下文。
-
-本 Skill 端到端诊断科学计算基准用例（`jobs/<job_name>` + `tasks/<task_name>`）的失败原因，产出中英双版因果审计报告（`report.md` / `report.zh.md` / `report.en.md`，以及仅在满足条件时生成的 `skill-prescription.md`）。
-
-归因硬性约束（与 Part I §Attribution Constraints 等价）：
-
-1. **严禁仅凭单一关键词定根因**。
-2. **严格区分失败现象、检测阶段与责任根因**。
-3. **Agent 未启动硬规则 (`runtime.agent_started == false`)**：存在致命基础设施证据 → 必须归因 `infra`；无任何异常/构建日志证据 → 必须归因 `unknown` (`UNKNOWN_INSUFFICIENT_EVIDENCE`)；**绝对禁止**归因 `agent`。
-4. **归因 `agent` 必须具备正面证据**：仅有 `reward=0` 或 `verify.log` 报错不构成 Agent 正面证据。
-5. **静态解析 Hazard 必须完成因果绑定 (`failure_binding == "direct"`)**。
-6. **证据不足或竞争假设无法区分时必须输出 `unknown`**。
-7. **仅针对可复用的 Agent 科学/工程能力缺口生成 `skill-prescription.md`**。
-
----
-
-## References / 参考文档
-
-Before finalizing complex attributions, consult / 在完成复杂案例归因前请查阅：
+Before finalizing complex attributions, consult:
 - [references/taxonomy.md](references/taxonomy.md)
 - [references/attribution-protocol.md](references/attribution-protocol.md)
 - [references/evidence-schema.md](references/evidence-schema.md)
 - [references/report-schema.md](references/report-schema.md)
 - [references/skill-prescription-policy.md](references/skill-prescription-policy.md)
-- [references/instructions.zh.md](references/instructions.zh.md) (完整中文规范 / full Chinese specification)
 - [references/error-families.json](references/error-families.json)
-- Software knowledge bases in `references/software/` (`软件错误知识库`):
-  - [cp2k.md](references/software/cp2k.md)
-  - [quantum-espresso.md](references/software/quantum-espresso.md)
-  - [lammps.md](references/software/lammps.md)
-  - [ase.md](references/software/ase.md)
-  - [xtb.md](references/software/xtb.md)
-  - [rdkit.md](references/software/rdkit.md)
+- Domain & software knowledge bases in `references/software/` (11 suites / 60 error families):
+  - [cp2k.md](references/software/cp2k.md) (`CP2K` mixed Gaussian/plane-wave DFT & AIMD)
+  - [quantum-espresso.md](references/software/quantum-espresso.md) (`Quantum ESPRESSO` plane-wave DFT / DFPT)
+  - [vasp-abacus.md](references/software/vasp-abacus.md) (`VASP`, `ABACUS`, `GPAW`, `Siesta`, `FHI-aims` solid-state DFT)
+  - [orca-gaussian-pyscf.md](references/software/orca-gaussian-pyscf.md) (`ORCA`, `Gaussian`, `PySCF`, `Psi4`, `Q-Chem`, `NWChem` molecular quantum chemistry)
+  - [lammps.md](references/software/lammps.md) (`LAMMPS` classical & reactive MD)
+  - [gromacs-amber-openmm.md](references/software/gromacs-amber-openmm.md) (`GROMACS`, `AMBER`, `OpenMM`, `NAMD`, `CHARMM` biomolecular MD)
+  - [mlip.md](references/software/mlip.md) (`MACE`, `NequIP`, `Allegro`, `DeePMD-kit`, `CHGNet`, `SevenNet`, `M3GNet`, `MatterSim`, `Orb` ML interatomic potentials)
+  - [ase.md](references/software/ase.md) (`ASE` / `pymatgen` workflows & calculators)
+  - [xtb.md](references/software/xtb.md) (`xTB` / `CREST` semiempirical quantum chemistry)
+  - [rdkit.md](references/software/rdkit.md) (`RDKit` cheminformatics & conformer generation)
+  - [generic-scientific.md](references/software/generic-scientific.md) (`SciPy`, `NumPy`, `JAX`, `PyTorch`, `FEniCS`, `OpenFOAM`, ODE/PDE/Linalg & unit conversion)

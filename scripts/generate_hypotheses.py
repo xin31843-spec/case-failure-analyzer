@@ -40,12 +40,18 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
     candidates: List[Dict[str, Any]] = []
     h_idx = 1
 
+    artifact_ids = {a.get("artifact_id") for a in (evidence.get("artifacts") or []) if a.get("artifact_id")}
+
     # 1. Pre-startup / Infrastructure hypotheses
     causal_infra = [e for e in errors if e.get("causal_candidate")]
     if causal_infra:
         primary_err = causal_infra[0]
         ev_for = [e["error_id"] for e in causal_infra]
-        ev_against = ["art:trajectory_json"] if agent_started else []
+        ev_against = (
+            ["art:trajectory_json"]
+            if (agent_started and "art:trajectory_json" in artifact_ids)
+            else []
+        )
         h = {
             "hypothesis_id": f"H{h_idx}",
             "category": "infra",
@@ -94,7 +100,10 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
 
     # 3. Verifier defect / crash hypotheses
     verifier_crashes = [v for v in verifier_obs if v.get("type") == "verifier_internal_crash"]
-    verifier_defects = [c for c in contracts if c.get("alignment") == "verifier_defect"]
+    verifier_defects = [
+        c for c in contracts
+        if c.get("alignment") in ("verifier_defect", "verifier_hidden_requirement", "verifier_schema_mismatch")
+    ]
     triggered_hazards = [
         v for v in verifier_obs
         if v.get("triggered") and v.get("type") != "verifier_internal_crash"
@@ -124,7 +133,17 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
     elif verifier_defects or triggered_hazards:
         vd = verifier_defects[0] if verifier_defects else None
         th = triggered_hazards[0] if triggered_hazards else None
+        is_schema_mismatch = bool(vd and vd.get("alignment") == "verifier_schema_mismatch")
         is_regex = bool((th and th.get("type") == "parser_hazard") or (vd and "namelist" in vd.get("item", "")))
+        if is_schema_mismatch:
+            v_subtype = "schema_mismatch"
+            v_code = "VERIFIER_SCHEMA_MISMATCH"
+        elif is_regex:
+            v_subtype = "regex_or_parser_defect"
+            v_code = "VERIFIER_REGEX_OR_PARSER_DEFECT"
+        else:
+            v_subtype = "hidden_contract"
+            v_code = "VERIFIER_HIDDEN_CONTRACT"
         ev_for = []
         if vd:
             ev_for.append(vd["contract_id"])
@@ -135,13 +154,13 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         h = {
             "hypothesis_id": f"H{h_idx}",
             "category": "verifier",
-            "subtype": "regex_or_parser_defect" if is_regex else "hidden_contract",
-            "code": "VERIFIER_REGEX_OR_PARSER_DEFECT" if is_regex else "VERIFIER_HIDDEN_CONTRACT",
+            "subtype": v_subtype,
+            "code": v_code,
             "claim": vd["details"] if vd else th["summary"],
             "evidence_for": ev_for,
             "evidence_against": [],
             "missing_evidence": [],
-            "counterfactual_test": "Patch `tests/verify.py` parser/header handling and re-verify existing workspace outputs.",
+            "counterfactual_test": "Patch `tests/verify.py` parser/header/schema handling and re-verify existing workspace outputs.",
         }
         attach_confidence_metadata(h, direct_causal_evidence=len(ev_for), cross_source_corroboration=1)
         candidates.append(h)
@@ -216,15 +235,16 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         h_idx += 1
 
     # 5. Agent behavioral / scientific hypotheses
+    unrecovered_sci_obs = [s for s in sci_obs if not s.get("recovered", False)]
+    recovered_sci_obs = [s for s in sci_obs if s.get("recovered", False)]
     agent_pos_refs: List[str] = []
-    for s in sci_obs:
+    for s in unrecovered_sci_obs:
         agent_pos_refs.append(s["sci_id"])
     for sig in signals:
         if sig.get("signal_type") in (
             "repeated_failed_action",
             "premature_completion",
             "wrong_output_path",
-            "scientific_parameter_changed",
             "asset_modified",
         ):
             agent_pos_refs.append(sig["signal_id"])
@@ -236,8 +256,8 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         h = {
             "hypothesis_id": f"H{h_idx}",
             "category": "agent",
-            "subtype": "error_diagnosis" if sci_obs else "task_understanding",
-            "code": "AGENT_ERROR_DIAGNOSIS" if sci_obs else "AGENT_TASK_UNDERSTANDING",
+            "subtype": "error_diagnosis" if unrecovered_sci_obs else "task_understanding",
+            "code": "AGENT_ERROR_DIAGNOSIS" if unrecovered_sci_obs else "AGENT_TASK_UNDERSTANDING",
             "claim": "Agent decision, input parameter, or missing output violated explicit task requirements.",
             "evidence_for": agent_pos_refs[:4],
             "evidence_against": [],
@@ -247,12 +267,16 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         attach_confidence_metadata(
             h,
             direct_causal_evidence=len(agent_pos_refs),
-            cross_source_corroboration=1 if (sci_obs and signals) else 0,
+            cross_source_corroboration=1 if (unrecovered_sci_obs and signals) else 0,
         )
         candidates.append(h)
         h_idx += 1
     else:
-        avail_against = [e["error_id"] for e in causal_infra] or (["ver:internal_crash"] if verifier_crashes else [])
+        avail_against = (
+            [e["error_id"] for e in causal_infra]
+            or (["ver:internal_crash"] if verifier_crashes else [])
+            or ([s.get("recovery_event_ref") for s in recovered_sci_obs if s.get("recovery_event_ref")])
+        )
         h = {
             "hypothesis_id": f"H{h_idx}",
             "category": "agent",

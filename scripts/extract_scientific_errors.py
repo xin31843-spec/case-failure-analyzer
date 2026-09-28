@@ -3,8 +3,9 @@
 Phase 5: Scientific Software Error Knowledge Layer (`scripts/extract_scientific_errors.py`)
 
 Loads the single-source-of-truth error registry from `references/error-families.json`
-and runs deterministic error-family adapters across CP2K, Quantum ESPRESSO, LAMMPS,
-xTB, ASE, and RDKit over trajectory observations and verifier logs.
+and runs deterministic error-family adapters across all 11 scientific computing and MLIP suites
+(60 error families across CP2K, Quantum ESPRESSO, VASP/ABACUS, ORCA/Gaussian/PySCF, LAMMPS,
+GROMACS/AMBER/OpenMM, MLIP, ASE, xTB, RDKit, and Generic Scientific) over trajectory observations and verifier logs.
 Outputs structured `scientific_observations` with `candidate_causes`, `aliases`, and
 `required_discriminating_evidence` without jumping directly to agent blame.
 """
@@ -82,9 +83,39 @@ def extract_scientific_errors(
     seen = set()
     sci_counter = 1
 
-    # 1. Scan trajectory events
+    # 1. Scan trajectory events and track whether later simulation runs recovered
     if normalized_traj:
-        for ev in normalized_traj.get("events") or []:
+        traj_events = normalized_traj.get("events") or []
+        sim_bins = (
+            "cp2k",
+            "pw.x",
+            "bands.x",
+            "lmp",
+            "lammps",
+            "xtb",
+            "vasp",
+            "abacus",
+            "orca",
+            "g16",
+            "g09",
+            "pyscf",
+            "psi4",
+            "nwchem",
+            "gmx",
+            "mdrun",
+            "pmemd",
+            "sander",
+            "openmm",
+            "mace",
+            "nequip",
+            "deepmd",
+            "dp ",
+            "chgnet",
+            "sevennet",
+            "openfoam",
+            "fenics",
+        )
+        for ev_idx, ev in enumerate(traj_events):
             text = f"{ev.get('command') or ''}\n{ev.get('observation') or ''}"
             ev_id = ev.get("event_id", "trajectory:unknown")
             for sw, family, aliases, pattern, causes, req_ev in SCIENTIFIC_ADAPTERS:
@@ -94,6 +125,25 @@ def extract_scientific_errors(
                     if dedup_key in seen:
                         continue
                     seen.add(dedup_key)
+
+                    # Check if a subsequent trajectory step ran a simulation and succeeded without this error
+                    recovery_ref: Optional[str] = None
+                    for later_ev in traj_events[ev_idx + 1 :]:
+                        later_cmd = (later_ev.get("command") or "").strip()
+                        later_obs = later_ev.get("observation") or ""
+                        later_exit = later_ev.get("exit_code")
+                        later_text = f"{later_cmd}\n{later_obs}"
+                        is_sim_cmd = any(b in later_cmd for b in sim_bins)
+                        if (
+                            is_sim_cmd
+                            and later_exit == 0
+                            and later_ev.get("event_type") != "shell_error"
+                            and not pattern.search(later_text)
+                            and not any(p[3].search(later_text) for p in SCIENTIFIC_ADAPTERS if p[0] == sw)
+                        ):
+                            recovery_ref = later_ev.get("event_id")
+                            break
+
                     observations.append(
                         {
                             "sci_id": f"sci:{sci_counter}",
@@ -103,38 +153,114 @@ def extract_scientific_errors(
                             "reference_anchor": f"references/software/{sw}.md#{family}",
                             "matched_text": m.group(0)[:240],
                             "source_ref": ev_id,
+                            "recovered": recovery_ref is not None,
+                            "recovery_event_ref": recovery_ref,
                             "candidate_causes": causes,
                             "required_discriminating_evidence": req_ev,
                         }
                     )
                     sci_counter += 1
 
-    # 2. Scan verifier/verify.log
-    if trial_dir and (trial_dir / "verifier" / "verify.log").is_file():
-        vlog = (trial_dir / "verifier" / "verify.log").read_text(encoding="utf-8", errors="replace")
-        for sw, family, aliases, pattern, causes, req_ev in SCIENTIFIC_ADAPTERS:
-            m = pattern.search(vlog)
-            if m:
-                dedup_key = (sw, family, m.group(0)[:80])
-                if dedup_key in seen:
-                    continue
-                seen.add(dedup_key)
-                observations.append(
-                    {
-                        "sci_id": f"sci:{sci_counter}",
-                        "software": sw,
-                        "error_family": family,
-                        "aliases": aliases,
-                        "reference_anchor": f"references/software/{sw}.md#{family}",
-                        "matched_text": vlog.splitlines()[0][:240] if vlog.splitlines() else m.group(0),
-                        "source_ref": "verifier/verify.log",
-                        "candidate_causes": causes,
-                        "required_discriminating_evidence": req_ev,
-                    }
-                )
-                sci_counter += 1
+    # 2. Fallback scan of agent logs when trajectory.json has no events
+    if not (normalized_traj and normalized_traj.get("events")) and trial_dir:
+        for rel_log in (
+            "agent/claude-code.txt",
+            "agent/codex.txt",
+            "agent/agent.log",
+            "agent/stdout.txt",
+            "agent/output.log",
+        ):
+            cc_path = trial_dir / rel_log
+            if cc_path.is_file():
+                cc_text = _read_bounded_text(cc_path)
+                for sw, family, aliases, pattern, causes, req_ev in SCIENTIFIC_ADAPTERS:
+                    m = pattern.search(cc_text)
+                    if m:
+                        dedup_key = (sw, family, m.group(0)[:80])
+                        if dedup_key in seen:
+                            continue
+                        seen.add(dedup_key)
+                        observations.append(
+                            {
+                                "sci_id": f"sci:{sci_counter}",
+                                "software": sw,
+                                "error_family": family,
+                                "aliases": aliases,
+                                "reference_anchor": f"references/software/{sw}.md#{family}",
+                                "matched_text": _extract_match_line(cc_text, m)[:240],
+                                "source_ref": "art:claude_code_txt"
+                                if rel_log == "agent/claude-code.txt"
+                                else rel_log,
+                                "candidate_causes": causes,
+                                "required_discriminating_evidence": req_ev,
+                            }
+                        )
+                        sci_counter += 1
+
+    # 3. Scan verifier logs (verify.log, test-stdout.txt, pytest.log)
+    if trial_dir:
+        for rel_vlog in (
+            "verifier/verify.log",
+            "verifier/test-stdout.txt",
+            "verifier/pytest.log",
+            "verify.log",
+        ):
+            vpath = trial_dir / rel_vlog
+            if vpath.is_file():
+                vlog = _read_bounded_text(vpath)
+                for sw, family, aliases, pattern, causes, req_ev in SCIENTIFIC_ADAPTERS:
+                    m = pattern.search(vlog)
+                    if m:
+                        dedup_key = (sw, family, m.group(0)[:80])
+                        if dedup_key in seen:
+                            continue
+                        seen.add(dedup_key)
+                        observations.append(
+                            {
+                                "sci_id": f"sci:{sci_counter}",
+                                "software": sw,
+                                "error_family": family,
+                                "aliases": aliases,
+                                "reference_anchor": f"references/software/{sw}.md#{family}",
+                                "matched_text": _extract_match_line(vlog, m)[:240],
+                                "source_ref": "verifier/verify.log"
+                                if rel_vlog.startswith("verifier/")
+                                else rel_vlog,
+                                "candidate_causes": causes,
+                                "required_discriminating_evidence": req_ev,
+                            }
+                        )
+                        sci_counter += 1
 
     return {"scientific_observations": observations}
+
+
+def _read_bounded_text(path: Path, max_bytes: int = 200000) -> str:
+    try:
+        file_size = path.stat().st_size
+        if file_size <= max_bytes:
+            return path.read_bytes().decode("utf-8", errors="replace")
+        half = max_bytes // 2
+        with path.open("rb") as f:
+            head = f.read(half)
+            f.seek(max(0, file_size - half))
+            tail = f.read(half)
+        return (
+            head.decode("utf-8", errors="replace")
+            + "\n... [TRUNCATED] ...\n"
+            + tail.decode("utf-8", errors="replace")
+        )
+    except OSError:
+        return ""
+
+
+def _extract_match_line(text: str, match: re.Match[str]) -> str:
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    line_end = text.find("\n", match.end())
+    if line_end == -1:
+        line_end = len(text)
+    line = text[line_start:line_end].strip()
+    return line or match.group(0)
 
 
 def main() -> None:

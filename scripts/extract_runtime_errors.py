@@ -20,6 +20,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from discover_artifacts import safe_load_json
 from runtime_state import compute_runtime_state
 
 
@@ -139,15 +140,22 @@ INFRA_RULES: List[Tuple[str, str, str, re.Pattern[str]]] = [
 def read_text_head_tail(path: Path, max_bytes: int = 120000) -> str:
     if not path.is_file():
         return ""
-    data = path.read_bytes()
-    if len(data) <= max_bytes:
-        return data.decode("utf-8", errors="replace")
-    half = max_bytes // 2
-    return (
-        data[:half].decode("utf-8", errors="replace")
-        + "\n... [TRUNCATED] ...\n"
-        + data[-half:].decode("utf-8", errors="replace")
-    )
+    try:
+        file_size = path.stat().st_size
+        if file_size <= max_bytes:
+            return path.read_bytes().decode("utf-8", errors="replace")
+        half = max_bytes // 2
+        with path.open("rb") as f:
+            head = f.read(half)
+            f.seek(max(0, file_size - half))
+            tail = f.read(half)
+        return (
+            head.decode("utf-8", errors="replace")
+            + "\n... [TRUNCATED] ...\n"
+            + tail.decode("utf-8", errors="replace")
+        )
+    except OSError:
+        return ""
 
 
 def extract_runtime_errors(
@@ -159,20 +167,14 @@ def extract_runtime_errors(
 
     trial_res_path = trial_dir / "result.json" if trial_dir else None
     job_res_path = job_dir / "result.json"
-    trial_res: Dict[str, Any] = {}
-    if trial_res_path and trial_res_path.is_file():
-        try:
-            loaded_trial = json.loads(trial_res_path.read_text(encoding="utf-8", errors="replace"))
-            trial_res = loaded_trial if isinstance(loaded_trial, dict) else {}
-        except Exception:
-            trial_res = {}
-    job_res: Dict[str, Any] = {}
-    if job_res_path.is_file():
-        try:
-            loaded_job = json.loads(job_res_path.read_text(encoding="utf-8", errors="replace"))
-            job_res = loaded_job if isinstance(loaded_job, dict) else {}
-        except Exception:
-            job_res = {}
+    loaded_trial = safe_load_json(trial_res_path) if trial_res_path else None
+    trial_res: Dict[str, Any] = (
+        loaded_trial if isinstance(loaded_trial, dict) and "_value" not in loaded_trial else {}
+    )
+    loaded_job = safe_load_json(job_res_path)
+    job_res: Dict[str, Any] = (
+        loaded_job if isinstance(loaded_job, dict) and "_value" not in loaded_job else {}
+    )
 
     rt_state = compute_runtime_state(
         job_result=job_res,

@@ -1,5 +1,7 @@
 # Causal Attribution Protocol
 
+**[English](attribution-protocol.md) | [简体中文](../zh/attribution-protocol.md)**
+
 Every failure analysis MUST follow this 7-step backward causal trace protocol. Do not jump from an error log line directly to a root cause label.
 
 ---

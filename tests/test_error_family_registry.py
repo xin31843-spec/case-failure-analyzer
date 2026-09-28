@@ -3,7 +3,7 @@
 Scientific Error Family Registry Alignment Test (`tests/test_error_family_registry.py`)
 
 Verifies that `references/error-families.json`, `scripts/extract_scientific_errors.py`,
-and all 6 `references/software/*.md` knowledge base tables use identical `error_family`
+and all 11 `references/software/*.md` knowledge base tables use identical `error_family`
 identifiers and that every documented family is registered and implemented.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ class TestErrorFamilyRegistryAlignment(unittest.TestCase):
         adapter_pairs = {(sw, fam) for sw, fam, *_ in SCIENTIFIC_ADAPTERS}
 
         software_files = sorted((ROOT_DIR / "references" / "software").glob("*.md"))
-        self.assertEqual(len(software_files), 6)
+        self.assertEqual(len(software_files), 11)
 
         total_documented = 0
         for md_path in software_files:
@@ -62,7 +62,47 @@ class TestErrorFamilyRegistryAlignment(unittest.TestCase):
                     f"Family `{software}:{fam}` is not active in SCIENTIFIC_ADAPTERS",
                 )
 
-        self.assertEqual(total_documented, 37)
+        self.assertEqual(total_documented, 60)
+
+    def test_broad_domain_mlip_vasp_orca_gromacs_generic_extraction(self) -> None:
+        from extract_scientific_errors import extract_scientific_errors
+
+        fake_traj = {
+            "events": [
+                {
+                    "event_id": "trajectory:step:1",
+                    "command": "python run_mace_md.py",
+                    "observation": "RuntimeError: NaN detected in predicted forces during MACE rollout",
+                },
+                {
+                    "event_id": "trajectory:step:2",
+                    "command": "mpirun -np 4 vasp_std",
+                    "observation": "Error EDDDAV: Call to ZHEEV failed, returncode = 6 1 9",
+                },
+                {
+                    "event_id": "trajectory:step:3",
+                    "command": "orca sp.inp > sp.out",
+                    "observation": "Multiplicity 2 is incompatible with number of electrons (18)",
+                },
+                {
+                    "event_id": "trajectory:step:4",
+                    "command": "gmx mdrun -deffnm npt",
+                    "observation": "Water molecule starting at atom 1423 can not be settled",
+                },
+                {
+                    "event_id": "trajectory:step:5",
+                    "command": "python solve_pde.py",
+                    "observation": "numpy.linalg.LinAlgError: Singular matrix in stiffness assembly",
+                },
+            ]
+        }
+        res = extract_scientific_errors(trial_dir=None, normalized_traj=fake_traj)
+        families = {(o["software"], o["error_family"]) for o in res["scientific_observations"]}
+        self.assertIn(("mlip", "mlip_rollout_ood_instability"), families)
+        self.assertIn(("vasp-abacus", "edddav_zheev_subspace_error"), families)
+        self.assertIn(("orca-gaussian-pyscf", "charge_spin_multiplicity_invalid"), families)
+        self.assertIn(("gromacs-amber-openmm", "lincs_shake_constraint_blowup"), families)
+        self.assertIn(("generic-scientific", "linalg_singular_ill_conditioned"), families)
 
 
 if __name__ == "__main__":

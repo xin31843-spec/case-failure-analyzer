@@ -14,16 +14,32 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from runtime_state import compute_runtime_state
+from runtime_state import (
+    compute_runtime_state,
+    resolve_trajectory_path,
+    resolve_verifier_script_path,
+)
+
+
+_SHA256_CACHE: Dict[Tuple[str, int, int, Optional[int]], str] = {}
+_JSON_CACHE: Dict[Tuple[str, int, int], Optional[Dict[str, Any]]] = {}
 
 
 def compute_sha256(path: Path, max_bytes: Optional[int] = None) -> str:
+    try:
+        st = path.stat()
+        cache_key = (str(path.resolve()), st.st_mtime_ns, st.st_size, max_bytes)
+        if cache_key in _SHA256_CACHE:
+            return _SHA256_CACHE[cache_key]
+    except OSError:
+        cache_key = None
+
     h = hashlib.sha256()
     with path.open("rb") as f:
         remaining = max_bytes
@@ -37,18 +53,31 @@ def compute_sha256(path: Path, max_bytes: Optional[int] = None) -> str:
             h.update(data)
             if remaining is not None:
                 remaining -= len(data)
-    return f"sha256:{h.hexdigest()}"
+    digest = f"sha256:{h.hexdigest()}"
+    if cache_key is not None:
+        _SHA256_CACHE[cache_key] = digest
+    return digest
 
 
 def safe_load_json(path: Path) -> Optional[Dict[str, Any]]:
     if not path.is_file():
         return None
     try:
+        st = path.stat()
+        cache_key = (str(path.resolve()), st.st_mtime_ns, st.st_size)
+        if cache_key in _JSON_CACHE:
+            return _JSON_CACHE[cache_key]
+    except OSError:
+        cache_key = None
+    try:
         with path.open("r", encoding="utf-8", errors="replace") as f:
             data = json.load(f)
-            return data if isinstance(data, dict) else {"_value": data}
+            parsed: Optional[Dict[str, Any]] = data if isinstance(data, dict) else {"_value": data}
     except Exception as exc:
-        return {"_parse_error": str(exc)}
+        parsed = {"_parse_error": str(exc)}
+    if cache_key is not None:
+        _JSON_CACHE[cache_key] = parsed
+    return parsed
 
 
 def safe_load_toml(path: Path) -> Optional[Dict[str, Any]]:
@@ -160,6 +189,12 @@ def build_trial_inventory(
             missing_artifacts.append(f"job:{rel}")
 
     # 2. Trial-level files
+    resolved_traj = resolve_trajectory_path(trial_dir)
+    traj_rel = (
+        str(resolved_traj.relative_to(trial_dir))
+        if (trial_dir and resolved_traj and resolved_traj.is_file())
+        else "agent/trajectory.json"
+    )
     trial_files = [
         ("art:trial_config", "config.json"),
         ("art:trial_lock", "lock.json"),
@@ -167,7 +202,7 @@ def build_trial_inventory(
         ("art:exception_txt", "exception.txt"),
         ("art:trial_log", "trial.log"),
         ("art:manifest_json", "artifacts/manifest.json"),
-        ("art:trajectory_json", "agent/trajectory.json"),
+        ("art:trajectory_json", traj_rel),
         ("art:claude_code_txt", "agent/claude-code.txt"),
         ("art:verify_log", "verifier/verify.log"),
         ("art:test_stdout", "verifier/test-stdout.txt"),
@@ -217,11 +252,17 @@ def build_trial_inventory(
 
     # 4. Task-level files
     if task_dir is not None and task_dir.is_dir():
+        resolved_verify = resolve_verifier_script_path(task_dir)
+        verify_rel = (
+            str(resolved_verify.relative_to(task_dir))
+            if (resolved_verify and resolved_verify.is_relative_to(task_dir))
+            else "tests/verify.py"
+        )
         task_files = [
             ("art:instruction_md", "instruction.md"),
             ("art:task_toml", "task.toml"),
             ("art:dockerfile", "environment/Dockerfile"),
-            ("art:verify_py", "tests/verify.py"),
+            ("art:verify_py", verify_rel),
             ("art:test_sh", "tests/test.sh"),
             ("art:refs_json", "tests/refs.json"),
         ]

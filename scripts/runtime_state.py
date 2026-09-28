@@ -15,6 +15,45 @@ from typing import Any, Dict, List, Optional
 SCHEMA_VERSION = "failure-analysis-v1"
 SUPPORTED_ATIF_VERSIONS = ("ATIF-v1.7", "ATIF-v1.6", "ATIF-v1.5")
 
+TRAJECTORY_REL_PATHS = (
+    "agent/trajectory.json",
+    "agent/trajectory.jsonl",
+    "agent/messages.json",
+    "agent/events.jsonl",
+    "trajectory.json",
+    "trajectory.jsonl",
+)
+
+VERIFIER_SCRIPT_REL_PATHS = (
+    "tests/verify.py",
+    "tests/test_outputs.py",
+    "tests/test_solution.py",
+    "tests/evaluate.py",
+    "verify.py",
+)
+
+
+def resolve_trajectory_path(trial_dir: Optional[Path]) -> Optional[Path]:
+    """Return the first existing trajectory file in `trial_dir`, or the default `agent/trajectory.json` path."""
+    if trial_dir is None:
+        return None
+    for rel in TRAJECTORY_REL_PATHS:
+        cand = trial_dir / rel
+        if cand.is_file():
+            return cand
+    return trial_dir / "agent" / "trajectory.json"
+
+
+def resolve_verifier_script_path(task_dir: Optional[Path]) -> Optional[Path]:
+    """Return the first existing Python verifier script in `task_dir`, or the default `tests/verify.py` path."""
+    if task_dir is None:
+        return None
+    for rel in VERIFIER_SCRIPT_REL_PATHS:
+        cand = task_dir / rel
+        if cand.is_file():
+            return cand
+    return task_dir / "tests" / "verify.py"
+
 
 def extract_trial_reward(
     trial_result: Dict[str, Any],
@@ -62,15 +101,33 @@ def compute_runtime_state(
     trial_res = trial_result if isinstance(trial_result, dict) else {}
 
     traj_exists = bool(
-        trial_dir and (trial_dir / "agent" / "trajectory.json").is_file()
+        trial_dir
+        and any((trial_dir / rel).is_file() for rel in TRAJECTORY_REL_PATHS)
     )
     claude_txt_exists = bool(
         trial_dir
-        and (trial_dir / "agent" / "claude-code.txt").is_file()
-        and (trial_dir / "agent" / "claude-code.txt").stat().st_size > 0
+        and any(
+            (trial_dir / rel).is_file() and (trial_dir / rel).stat().st_size > 0
+            for rel in (
+                "agent/claude-code.txt",
+                "agent/codex.txt",
+                "agent/agent.log",
+                "agent/stdout.txt",
+                "agent/output.log",
+            )
+        )
     )
     verify_log_exists = bool(
-        trial_dir and (trial_dir / "verifier" / "verify.log").is_file()
+        trial_dir
+        and any(
+            (trial_dir / rel).is_file()
+            for rel in (
+                "verifier/verify.log",
+                "verifier/pytest.log",
+                "verifier/verifier.log",
+                "verify.log",
+            )
+        )
     )
     test_stdout_exists = bool(
         trial_dir
@@ -78,7 +135,11 @@ def compute_runtime_state(
         and (trial_dir / "verifier" / "test-stdout.txt").stat().st_size > 0
     )
     reward_txt_exists = bool(
-        trial_dir and (trial_dir / "verifier" / "reward.txt").is_file()
+        trial_dir
+        and (
+            (trial_dir / "verifier" / "reward.txt").is_file()
+            or (trial_dir / "reward.txt").is_file()
+        )
     )
     exception_txt_exists = bool(
         trial_dir and (trial_dir / "exception.txt").is_file()

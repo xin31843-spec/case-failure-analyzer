@@ -689,5 +689,445 @@
         "Compare `rdMolStandardize.LargestFragmentChooser`, `Uncharger`, and `TautomerEnumerator` call order"
       ]
     }
+  },
+  "vasp-abacus": {
+    "edddav_zheev_subspace_error": {
+      "status": "implemented",
+      "aliases": ["vasp_subspace_diagonalization_error"],
+      "reference_anchor": "edddav_zheev_subspace_error",
+      "patterns": [
+        "Error EDDDAV: Call to ZHEEV failed",
+        "Sub-Space-Matrix is not hermitian",
+        "S-matrix is not positive definite",
+        "LAPACK: Routine ZPOTRF failed"
+      ],
+      "candidate_causes": [
+        "overlapping_atomic_positions_in_poscar_stru",
+        "aggressive_algo_fast_instead_of_normal_all",
+        "insufficient_symprec_or_corrupt_paw_potcar"
+      ],
+      "required_discriminating_evidence": [
+        "Check minimum interatomic distances in `POSCAR` / `STRU`",
+        "Inspect `ALGO` (`Normal` / `All` vs `Fast` / `VeryFast`) and `ISYM` in `INCAR` / `INPUT`"
+      ]
+    },
+    "zbrent_brmix_charge_sloshing": {
+      "status": "implemented",
+      "aliases": ["vasp_brmix_zbrent_error"],
+      "reference_anchor": "zbrent_brmix_charge_sloshing",
+      "patterns": [
+        "ZBRENT: fatal error in bracketing",
+        "BRMIX: very serious problems",
+        "DENTET: can't reach specified precision"
+      ],
+      "candidate_causes": [
+        "charge_sloshing_in_slab_or_metal",
+        "inappropriate_ismear_sigma_for_semiconductor_or_metal",
+        "bad_ediffg_step_for_cg_relaxation"
+      ],
+      "required_discriminating_evidence": [
+        "Inspect `AMIX`, `BMIX`, `ISMEAR`, `SIGMA`, and `IBRION` settings in `INCAR`"
+      ]
+    },
+    "potcar_psp_element_mismatch": {
+      "status": "implemented",
+      "aliases": ["basis_or_potential_missing"],
+      "reference_anchor": "potcar_psp_element_mismatch",
+      "patterns": [
+        "POTCAR.*cannot be opened",
+        "number of potentials.*in POTCAR.*mismatch",
+        "PSEUDOPOTENTIAL_ERROR",
+        "Cannot find pseudopotential file",
+        "NUMERICAL_ORBITAL.*not found"
+      ],
+      "candidate_causes": [
+        "poscar_potcar_species_order_mismatch",
+        "missing_paw_potcar_or_abacus_orb_upf_path",
+        "wrong_pseudo_dir_in_input"
+      ],
+      "required_discriminating_evidence": [
+        "Compare species order in `POSCAR` / `STRU` against `POTCAR` (`grep TITEL POTCAR`) or `pseudo_dir`"
+      ]
+    },
+    "nelm_electronic_nonconvergence": {
+      "status": "implemented",
+      "aliases": ["scf_nonconvergence"],
+      "reference_anchor": "nelm_electronic_nonconvergence",
+      "patterns": [
+        "electronic self-consistency was not achieved",
+        "charge density could not be converged",
+        "Reach the Maximum Electron Steps"
+      ],
+      "candidate_causes": [
+        "nelm_too_small_for_magnetic_or_correlated_system",
+        "missing_spin_polarization_ispin_or_magmom",
+        "insufficient_kpoint_mesh_or_encut"
+      ],
+      "required_discriminating_evidence": [
+        "Check `OSZICAR` / `running_scf.log` dE progression, `NELM`, `ISPIN`, and `EDIFF`"
+      ]
+    },
+    "nbands_ncore_memory_parallel": {
+      "status": "implemented",
+      "aliases": ["mpi_or_runtime_crash"],
+      "reference_anchor": "nbands_ncore_memory_parallel",
+      "patterns": [
+        "TOO FEW BANDS",
+        "highest band is occupied",
+        "NCORE.*incompatible"
+      ],
+      "candidate_causes": [
+        "nbands_below_valence_plus_conduction_requirement",
+        "ncore_kpar_mismatch_with_mpi_ranks",
+        "out_of_memory_for_hybrid_functional_or_gw"
+      ],
+      "required_discriminating_evidence": [
+        "Compare `NBANDS`, `NELECT`, `NCORE`, and `KPAR` against MPI rank count in `OUTCAR`"
+      ]
+    }
+  },
+  "orca-gaussian-pyscf": {
+    "scf_diis_convergence_failure": {
+      "status": "implemented",
+      "aliases": ["scf_nonconvergence"],
+      "reference_anchor": "scf_diis_convergence_failure",
+      "patterns": [
+        "SCF NOT CONVERGED AFTER .* CYCLES",
+        "Convergence failure -- run terminated",
+        "Error termination via Lnk1e.*l502\\.exe",
+        "SCF did not converge"
+      ],
+      "candidate_causes": [
+        "open_shell_transition_metal_without_slowconv_or_soscf",
+        "wrong_charge_or_multiplicity_assignment",
+        "oscillating_diis_without_level_shift_or_damping"
+      ],
+      "required_discriminating_evidence": [
+        "Check SCF energy/DIIS error oscillation and whether `SlowConv`, `SOSCF`, `KDIIS`, or `SCF=(XQC,MaxCycle)` was enabled"
+      ]
+    },
+    "geometry_opt_ts_imaginary_freq": {
+      "status": "implemented",
+      "aliases": ["geoopt_or_cellopt_nonconvergence"],
+      "reference_anchor": "geometry_opt_ts_imaginary_freq",
+      "patterns": [
+        "Error termination request processed by link 9999",
+        "THE OPTIMIZATION DID NOT CONVERGE",
+        "imaginary frequencies.*found",
+        "Eigenvalue .* of internal coordinate B-matrix is zero"
+      ],
+      "candidate_causes": [
+        "flat_potential_energy_surface_without_calcfc_or_tightopt",
+        "transition_state_missing_single_imaginary_mode",
+        "linear_bend_internal_coordinate_singularity"
+      ],
+      "required_discriminating_evidence": [
+        "Inspect Hessian vibrational frequency spectrum and `MaxIter` / `Recalc_Hess` / `Opt=(CalcFC,TS)` keywords"
+      ]
+    },
+    "basis_set_linear_dependence": {
+      "status": "implemented",
+      "aliases": ["basis_or_potential_missing"],
+      "reference_anchor": "basis_set_linear_dependence",
+      "patterns": [
+        "Near linear dependence in overlap matrix",
+        "Basis set .* not recognized",
+        "AuxJ basis set is missing",
+        "Error termination via Lnk1e.*l301\\.exe"
+      ],
+      "candidate_causes": [
+        "diffuse_functions_causing_overlap_singularity",
+        "missing_auxiliary_ri_jk_basis_set",
+        "unsupported_element_for_chosen_basis"
+      ],
+      "required_discriminating_evidence": [
+        "Check smallest overlap eigenvalue (`S-Matrix`), `sthresh` / `lindep` threshold, and auxiliary basis specification"
+      ]
+    },
+    "charge_spin_multiplicity_invalid": {
+      "status": "implemented",
+      "aliases": ["multiplicity_or_charge_mismatch"],
+      "reference_anchor": "charge_spin_multiplicity_invalid",
+      "patterns": [
+        "Multiplicity .* is incompatible with number of electrons",
+        "The combination of multiplicity .* and .* electrons is impossible",
+        "num_elec .* and spin .* are not consistent"
+      ],
+      "candidate_causes": [
+        "odd_even_electron_parity_violation",
+        "missing_counterion_or_protonation_state_charge",
+        "pyscf_2s_spin_convention_vs_2s_plus_1_multiplicity"
+      ],
+      "required_discriminating_evidence": [
+        "Verify total electron count $N_e$ against charge $Q$ and multiplicity $2S+1$ (or PySCF `mol.spin = 2S`)"
+      ]
+    },
+    "post_hf_memory_integral_overflow": {
+      "status": "implemented",
+      "aliases": ["mpi_or_runtime_crash"],
+      "reference_anchor": "post_hf_memory_integral_overflow",
+      "patterns": [
+        "not enough memory for CCSD",
+        "MaxCore.*exceeded",
+        "Out-of-memory error in .* integral",
+        "Write error in NtrExt1"
+      ],
+      "candidate_causes": [
+        "insufficient_maxcore_per_mpi_rank",
+        "missing_dlpno_or_resolution_of_identity_approximation",
+        "scratch_disk_full_for_two_electron_integrals"
+      ],
+      "required_discriminating_evidence": [
+        "Compare `%maxcore` * `%pal nprocs` (or `%mem`) against container memory and scratch disk quota"
+      ]
+    }
+  },
+  "gromacs-amber-openmm": {
+    "lincs_shake_constraint_blowup": {
+      "status": "implemented",
+      "aliases": ["lost_atoms_or_unstable_dynamics"],
+      "reference_anchor": "lincs_shake_constraint_blowup",
+      "patterns": [
+        "LINCS WARNING",
+        "Water molecule starting at atom .* can not be settled",
+        "Particle coordinate is NaN",
+        "vlimit exceeded for step",
+        "SHAKE.*cannot be accomplished"
+      ],
+      "candidate_causes": [
+        "unminimized_steric_clashes_before_md",
+        "timestep_2fs_without_hbond_constraints",
+        "aggressive_np_barostat_during_initial_equilibration"
+      ],
+      "required_discriminating_evidence": [
+        "Check whether steepest-descent energy minimization (`em.mdp` / `minimizeEnergy`) reached $F_{\\max} < 1000\\text{ kJ/mol/nm}$ before MD"
+      ]
+    },
+    "topology_coordinate_mismatch": {
+      "status": "implemented",
+      "aliases": ["input_parser_error"],
+      "reference_anchor": "topology_coordinate_mismatch",
+      "patterns": [
+        "number of coordinates in coordinate file .* does not match topology",
+        "Atom .* in residue .* was not found in rtp entry",
+        "Number of atoms in inpcrd .* does not match prmtop"
+      ],
+      "candidate_causes": [
+        "solvent_or_ion_count_not_updated_in_topol_top",
+        "histidine_protonation_or_terminal_capping_name_mismatch",
+        "missing_hydrogen_atoms_in_input_pdb"
+      ],
+      "required_discriminating_evidence": [
+        "Compare atom count in `.gro`/`.inpcrd`/`.pdb` against `[ molecules ]` in `topol.top` or `.prmtop`"
+      ]
+    },
+    "missing_forcefield_parameters": {
+      "status": "implemented",
+      "aliases": ["basis_or_potential_missing"],
+      "reference_anchor": "missing_forcefield_parameters",
+      "patterns": [
+        "No default Bond types",
+        "No default Proper Dih\\. types",
+        "Could not find bond parameter for",
+        "No template found for residue"
+      ],
+      "candidate_causes": [
+        "unparameterized_small_molecule_ligand_missing_gaff_cgenff_itp",
+        "missing_include_statement_for_ligand_prm_in_topology",
+        "nonstandard_residue_or_metal_coordinating_site"
+      ],
+      "required_discriminating_evidence": [
+        "Inspect `#include` directives in `.top` or `ForceField(...)` XML files for ligand/cofactor parameter definitions"
+      ]
+    },
+    "pme_barostat_instability": {
+      "status": "implemented",
+      "aliases": ["md_abnormal_termination"],
+      "reference_anchor": "pme_barostat_instability",
+      "patterns": [
+        "Pressure scaling more than 1%",
+        "box size .* has shifted too much",
+        "The cut-off length is longer than half the shortest box vector"
+      ],
+      "candidate_causes": [
+        "parrinello_rahman_barostat_used_on_unequilibrated_box",
+        "periodic_box_too_small_for_rcoulomb_rvdw_cutoff",
+        "vacuum_bubble_from_underpacked_solvent_box"
+      ],
+      "required_discriminating_evidence": [
+        "Check `pcoupl` (`Berendsen`/`C-rescale` vs `Parrinello-Rahman`), box vector lengths, and `rcoulomb`/`rvdw`"
+      ]
+    }
+  },
+  "mlip": {
+    "checkpoint_architecture_incompatibility": {
+      "status": "implemented",
+      "aliases": ["basis_or_potential_missing"],
+      "reference_anchor": "checkpoint_architecture_incompatibility",
+      "patterns": [
+        "Error\\(s\\) in loading state_dict",
+        "WeightsOnlyLoadWarning.*UnpicklingError",
+        "Weights only load failed",
+        "cuequivariance.*not available",
+        "No such file or directory:.*\\.(?:model|pt|pth|ckpt|pb)"
+      ],
+      "candidate_causes": [
+        "pytorch_weights_only_true_blocking_mace_nequip_checkpoint",
+        "missing_local_foundation_model_checkpoint_path",
+        "mismatch_between_mace_nequip_deepmd_version_and_checkpoint_hyperparameters"
+      ],
+      "required_discriminating_evidence": [
+        "Check checkpoint file existence, `torch.load(..., weights_only=False)` compatibility, and installed MLIP package version"
+      ]
+    },
+    "mlip_rollout_ood_instability": {
+      "status": "implemented",
+      "aliases": ["lost_atoms_or_unstable_dynamics"],
+      "reference_anchor": "mlip_rollout_ood_instability",
+      "patterns": [
+        "RuntimeError:.*neighbor.*cutoff",
+        "NaN detected in predicted forces",
+        "MLIP forces exceeded .* eV/A",
+        "zero neighbors found for atom"
+      ],
+      "candidate_causes": [
+        "out_of_distribution_atomic_overlap_triggering_repulsive_hole",
+        "missing_zbl_pair_repulsion_prior_at_high_temperature",
+        "non_periodic_cell_without_pbc_true_during_bulk_rollout"
+      ],
+      "required_discriminating_evidence": [
+        "Inspect minimum interatomic distance ($r_{ij}$) and max atomic force ($\\max |F_i|$) prior to rollout divergence"
+      ]
+    },
+    "element_embedding_z_unsupported": {
+      "status": "implemented",
+      "aliases": ["calculator_or_pseudopotential_setup_error"],
+      "reference_anchor": "element_embedding_z_unsupported",
+      "patterns": [
+        "Atomic number .* not in model",
+        "type_map.*does not contain",
+        "Unsupported element .* for potential",
+        "KeyError:.*atomic_numbers"
+      ],
+      "candidate_causes": [
+        "trained_mlip_potential_missing_species_in_z_table_or_type_map",
+        "wrong_chemical_symbol_mapping_in_deepmd_type_raw"
+      ],
+      "required_discriminating_evidence": [
+        "Compare `atoms.get_chemical_symbols()` against the MLIP checkpoint's `atomic_numbers` / `type_map` list"
+      ]
+    },
+    "device_dtype_oom_error": {
+      "status": "implemented",
+      "aliases": ["mpi_or_runtime_crash"],
+      "reference_anchor": "device_dtype_oom_error",
+      "patterns": [
+        "CUDA out of memory",
+        "Expected all tensors to be on the same device",
+        "Input type \\(torch\\..*DoubleTensor\\) and weight type \\(torch\\..*FloatTensor\\)",
+        "mat1 and mat2 must have the same dtype"
+      ],
+      "candidate_causes": [
+        "float64_ase_positions_passed_to_float32_mlip_model_or_vice_versa",
+        "supercell_graph_edges_exceeding_gpu_vram_without_batching_or_cpu_fallback",
+        "mixed_cpu_cuda_device_placement"
+      ],
+      "required_discriminating_evidence": [
+        "Inspect `default_dtype` (`float32` vs `float64`), `device` argument (`cpu` vs `cuda`), and supercell atom/edge count"
+      ]
+    },
+    "energy_reference_unit_offset": {
+      "status": "implemented",
+      "aliases": ["unit_dimensionality_scaling_error"],
+      "reference_anchor": "energy_reference_unit_offset",
+      "patterns": [
+        "formation_energy.*mismatch.*isolated atom",
+        "reference_energy.*offset",
+        "E0s.*not subtracted"
+      ],
+      "candidate_causes": [
+        "comparing_mlip_cohesive_energy_directly_against_dft_total_energy_without_e0_shift",
+        "mixing_ev_per_atom_with_total_supercell_energy_or_kcal_mol"
+      ],
+      "required_discriminating_evidence": [
+        "Check whether per-element isolated atom reference energies (`E0s`) or per-atom normalization (`/ len(atoms)`) were applied"
+      ]
+    }
+  },
+  "generic-scientific": {
+    "linalg_singular_ill_conditioned": {
+      "status": "implemented",
+      "aliases": ["cholesky_or_overlap_failure"],
+      "reference_anchor": "linalg_singular_ill_conditioned",
+      "patterns": [
+        "LinAlgError: Singular matrix",
+        "LinAlgError: Matrix is not positive definite",
+        "ArpackNoConvergence",
+        "ill-conditioned matrix"
+      ],
+      "candidate_causes": [
+        "collinear_or_rank_deficient_design_matrix_or_jacobian",
+        "missing_tikhonov_regularization_or_gauge_fixing_boundary_condition",
+        "zero_diagonal_pivot_from_unconstrained_rigid_body_modes"
+      ],
+      "required_discriminating_evidence": [
+        "Check matrix condition number `np.linalg.cond(A)`, boundary condition rank, and regularization parameter"
+      ]
+    },
+    "ode_pde_solver_divergence": {
+      "status": "implemented",
+      "aliases": ["md_abnormal_termination"],
+      "reference_anchor": "ode_pde_solver_divergence",
+      "patterns": [
+        "Required step size is less than spacing between numbers",
+        "IntegrationWarning: Excess work done",
+        "Courant number .* exceeds",
+        "FloatingPointError: overflow encountered"
+      ],
+      "candidate_causes": [
+        "explicit_rk45_euler_solver_used_on_stiff_ode_system_instead_of_bdf_radau",
+        "cfl_condition_violated_dt_too_large_for_spatial_mesh_dx",
+        "unphysical_initial_or_boundary_value_discontinuity"
+      ],
+      "required_discriminating_evidence": [
+        "Compare stiffness ratio, solver method (`RK45` vs `Radau`/`BDF`), and $\\Delta t / \\Delta x^2$ CFL stability criterion"
+      ]
+    },
+    "nonlinear_optimization_nonconvergence": {
+      "status": "implemented",
+      "aliases": ["geoopt_or_cellopt_nonconvergence"],
+      "reference_anchor": "nonlinear_optimization_nonconvergence",
+      "patterns": [
+        "Positive directional derivative for linesearch",
+        "Maximum number of function evaluations has been exceeded",
+        "Desired error not necessarily achieved due to precision loss"
+      ],
+      "candidate_causes": [
+        "inconsistent_analytical_gradient_vs_finite_difference_objective",
+        "unscaled_decision_variables_spanning_many_orders_of_magnitude",
+        "noisy_stochastic_objective_passed_to_l_bfgs_b_slsqp"
+      ],
+      "required_discriminating_evidence": [
+        "Check `scipy.optimize.check_grad`, parameter scaling, and `OptimizeResult.message` / gradient norm"
+      ]
+    },
+    "unit_dimensionality_scaling_error": {
+      "status": "implemented",
+      "aliases": ["energy_reference_unit_offset"],
+      "reference_anchor": "unit_dimensionality_scaling_error",
+      "patterns": [
+        "DimensionError:.*incompatible units",
+        "UnitConversionError",
+        "off by factor of (?:27\\.21|627\\.5|4\\.184|0\\.529|13\\.605)"
+      ],
+      "candidate_causes": [
+        "hartree_to_ev_or_kcal_mol_conversion_omitted",
+        "bohr_to_angstrom_or_nm_length_scale_mismatch",
+        "kbar_to_gpa_or_bar_to_atm_pressure_conversion_factor_error"
+      ],
+      "required_discriminating_evidence": [
+        "Compare ratio between agent value and reference value against fundamental constants ($27.2114\\text{ eV/Ha}$, $0.529177\\text{ \\AA/Bohr}$, $4.184\\text{ kJ/kcal}$, $10\\text{ kbar/GPa}$)"
+      ]
+    }
   }
 }

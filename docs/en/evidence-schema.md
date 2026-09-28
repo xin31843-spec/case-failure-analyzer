@@ -1,5 +1,7 @@
 # Evidence & Analysis JSON Schemas (`failure-analysis-v1`)
 
+**[English](evidence-schema.md) | [简体中文](../zh/evidence-schema.md)**
+
 ## 1. `evidence.json` Schema
 
 `evidence.json` stores purely objective observations extracted by deterministic scripts (`discover_artifacts.py`, `runtime_state.py`, `normalize_trajectory.py`, `extract_runtime_errors.py`, `audit_contract.py`, `extract_scientific_errors.py`). It must never contain subjective root-cause labels.
