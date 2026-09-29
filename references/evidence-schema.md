@@ -146,7 +146,7 @@
     "summary": "Human-readable description of the final failure symptom"
   },
   "primary_root_cause": {
-    "category": "infra|case|agent|verifier|numerical|unknown|none",
+    "category": "infra|case|agent|verifier|unknown|none",
     "subtype": "external_network",
     "code": "INFRA_EXTERNAL_NETWORK",
     "confidence": 0.86,

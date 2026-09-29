@@ -60,6 +60,6 @@
 
 ## 4. 数值漂移与竞争假设规则 (`Numerical Attribution & Competing Hypothesis Rules`)
 
-- **结构化数值证据要求**：严禁仅凭日志中出现 `chaotic` 等单一词汇就判为 `numerical` (`NUMERICAL_TRAJECTORY_DIVERGENCE`)。必须具备结构化对比证据，表明逐点轨迹/瞬时坐标发散的同时，系综统计均值或守恒量与参考值一致。
+- **结构化数值证据要求**：当具备结构化对比证据表明逐点轨迹/瞬时坐标发散但系综均值或守恒量与参考值吻合时，主根因归为 `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`)，责任人属验证器方。严禁仅凭单一词汇直接下结论（无数据时退化至 `unknown`）。
 - **竞争假设必填**：每一个失败或异常用例都必须填充 `competing_hypotheses`（对应 `candidate-hypotheses.json`）及 `first_unrecovered_deviation`。
 - **校准的证据强度评分**：置信度评分（`confidence_kind = "heuristic_evidence_score"`，`evidence_strength = "high" | "medium" | "low"`）由支持证据点数、多源交叉印证及竞争假设区分度确定性计算得出（见 `scripts/confidence.py`）。

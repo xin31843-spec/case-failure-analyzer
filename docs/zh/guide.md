@@ -59,7 +59,7 @@
 
 ## 归因硬性约束 (`Attribution Hard Rules`)
 
-1. **严禁仅凭单一关键词定根因**：日志中孤立出现 `chaotic` 等词汇而无轨迹/系综统计对比数据时，严禁直接归因 `numerical`。
+1. **严禁仅凭单一关键词定根因**：日志中孤立出现 `chaotic` 等词汇而无轨迹/系综统计对比数据时，严禁判定为数值发散容差问题（无充分对比数据时必须归因 `unknown`）。
 2. **严格区分失败现象、检测阶段与责任根因**。
 3. **Agent 未启动硬规则 (`runtime.agent_started == false`)**：
    - 若 `agent_started == false` 且存在致命基础设施错误证据 → 必须归因 `infra`；

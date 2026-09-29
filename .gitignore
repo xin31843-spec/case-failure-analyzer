@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 failure-analysis/
+uv.lock
 
 
 # Generated analysis artifacts (never commit analyzer output)

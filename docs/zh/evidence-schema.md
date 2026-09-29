@@ -148,7 +148,7 @@
     "summary": "最终失败表象的可读摘要说明"
   },
   "primary_root_cause": {
-    "category": "infra|case|agent|verifier|numerical|unknown|none",
+    "category": "infra|case|agent|verifier|unknown|none",
     "subtype": "external_network",
     "code": "INFRA_EXTERNAL_NETWORK",
     "confidence": 0.86,

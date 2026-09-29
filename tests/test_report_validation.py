@@ -16,6 +16,7 @@ Fixture trees are built by the shared builders in `tests/archetype_builders.py`,
 `test_attribution_characterization.py` also consumes, so both suites exercise byte-identical
 trees from a single definition.
 """
+
 from __future__ import annotations
 
 import sys
@@ -94,7 +95,9 @@ class TestGoldenCasesAndValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             job_dir, task_dir = build_golden6_numerical_md_trajectory_divergence(Path(tmp))
             _, an, _ = self._run_case(job_dir, task_dir)
-            self.assertEqual(an["primary_root_cause"]["category"], "numerical")
+            self.assertEqual(an["primary_root_cause"]["category"], "verifier")
+            self.assertEqual(an["primary_root_cause"]["code"], "VERIFIER_TOLERANCE_TOO_STRICT")
+            self.assertEqual(an["failure_manifestation"]["type"], "numerical_trajectory_divergence")
 
     def test_golden_7_unknown_missing_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

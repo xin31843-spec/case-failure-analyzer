@@ -10,16 +10,20 @@ repository - these modules are maintained by hand from here, and
 `tests/test_attribution_characterization.py` will show any behavior change as a
 reviewable baseline diff.
 """
+
 from __future__ import annotations
 
-from ..families import matches_family as _matches_family
+from ..families import (
+    CONTINUATION_FAMILIES,
+    DEPENDENCY_DISCOVERY_FAMILIES,
+    matches_family as _matches_family,
+)
 from confidence import attach_confidence_metadata
 from runtime_state import SCHEMA_VERSION
 
 from typing import Any, Dict, Optional
 
 from ..context import AttributionContext
-
 
 
 def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
@@ -37,18 +41,18 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     timeline = ctx.timeline
     trial_name = ctx.trial_name
     unrecovered_sci_obs = ctx.unrecovered_sci_obs
+    unverified_output_sigs = ctx.unverified_output_sigs
     verifier_started = ctx.verifier_started
 
     # Positive Agent Evidence Attribution
     ev_refs = []
     for s in unrecovered_sci_obs:
-        ev_refs.append(s["sci_id"])
+        if str(s.get("source_ref", "")).startswith("trajectory:"):
+            ev_refs.append(s["sci_id"])
     for sig in signals[:3]:
         ev_refs.append(sig["signal_id"])
     for c in agent_mismatch_contracts:
         ev_refs.append(c["contract_id"])
-    if not any(r.startswith(("sig:", "contract:", "sci:")) for r in ev_refs) and agent_timeline_events:
-        ev_refs.append(agent_timeline_events[-1]["event_id"])
     if fail_log_obs:
         ev_refs.append("ver:fail_log")
 
@@ -86,39 +90,12 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         }
     # Subcase 5b: Missing file/dependency/checkpoint discovery when file exists in container (`/opt/...` or `/workspace/assets/`)
     elif (
-        any(
-            _matches_family(
-                s,
-                (
-                    "basis_or_potential_missing",
-                    "pseudopotential_read_failure",
-                    "pseudopotential_mismatch_or_missing",
-                    "potcar_psp_element_mismatch",
-                    "checkpoint_architecture_incompatibility",
-                    "missing_forcefield_parameters",
-                    "basis_set_linear_dependence",
-                ),
-            )
-            for s in unrecovered_sci_obs
-        )
+        any(_matches_family(s, DEPENDENCY_DISCOVERY_FAMILIES) for s in unrecovered_sci_obs)
         and not dep_search_sigs
     ):
         subcase_id = "5b"
         first_sci = next(
-            s
-            for s in unrecovered_sci_obs
-            if _matches_family(
-                s,
-                (
-                    "basis_or_potential_missing",
-                    "pseudopotential_read_failure",
-                    "pseudopotential_mismatch_or_missing",
-                    "potcar_psp_element_mismatch",
-                    "checkpoint_architecture_incompatibility",
-                    "missing_forcefield_parameters",
-                    "basis_set_linear_dependence",
-                ),
-            )
+            s for s in unrecovered_sci_obs if _matches_family(s, DEPENDENCY_DISCOVERY_FAMILIES)
         )
         subtype = "path_or_dependency_discovery"
         code = "AGENT_PATH_OR_DEPENDENCY_DISCOVERY"
@@ -133,15 +110,10 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         )
         skill_prescription = None
     # Subcase 5c: Continuation / state-preservation parameter mismatch
-    elif any(
-        _matches_family(s, ("restart_or_timestep_continuation_mismatch", "restart_continuation_divergence"))
-        for s in unrecovered_sci_obs
-    ):
+    elif any(_matches_family(s, CONTINUATION_FAMILIES) for s in unrecovered_sci_obs):
         subcase_id = "5c"
         first_sci = next(
-            s
-            for s in unrecovered_sci_obs
-            if _matches_family(s, ("restart_or_timestep_continuation_mismatch", "restart_continuation_divergence"))
+            s for s in unrecovered_sci_obs if _matches_family(s, CONTINUATION_FAMILIES)
         )
         subtype = "scientific_parameter_selection"
         code = "AGENT_SCIENTIFIC_PARAMETER_SELECTION"
@@ -170,62 +142,37 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
                 "evidence_cases": [f"{case_id}:{fud_ref}"],
             }
         }
-    # Subcase 5c-ext: Any other unrecovered domain scientific / MLIP / numerical solver error family observed
-    elif unrecovered_sci_obs:
-        subcase_id = "5c_ext"
-        first_sci = unrecovered_sci_obs[0]
-        subtype = "scientific_parameter_selection"
-        code = "AGENT_SCIENTIFIC_PARAMETER_SELECTION"
-        summary = (
-            f"Domain solver/model emitted `{first_sci['error_family']}` (`{first_sci['software']}`: `{first_sci['matched_text'][:100]}`), "
-            f"indicating an unrecovered scientific setup or model configuration issue ({', '.join(first_sci['candidate_causes'][:2])})."
-        )
-        fud_ref = (
-            first_sci["source_ref"]
-            if str(first_sci.get("source_ref", "")).startswith(("trajectory:", "art:"))
-            else first_sci["sci_id"]
-        )
-        skill_prescription = {
-            "recommended_skill": {
-                "name": f"{first_sci['software']}-{first_sci['error_family'].replace('_', '-')}-guidance",
-                "trigger": [
-                    f"`{first_sci['software']}` workflow encounters `{first_sci['error_family']}`",
-                    f"Diagnostic signature: `{first_sci['matched_text'][:80]}`",
-                ],
-                "capability_gap": [
-                    f"Agent lacked domain recovery protocol for `{first_sci['software']}:{first_sci['error_family']}`."
-                ],
-                "required_guidance": [
-                    f"Audit discriminating evidence: {', '.join(first_sci['required_discriminating_evidence'][:2])}.",
-                    f"Remediate candidate causes: {', '.join(first_sci['candidate_causes'][:3])}.",
-                ],
-                "anti_patterns": [
-                    f"Do not ignore `{first_sci['error_family']}` warnings or proceed with unconverged/unstable `{first_sci['software']}` states."
-                ],
-                "evidence_cases": [f"{case_id}:{fud_ref}"],
-            }
-        }
     # Subcase 5d: Premature completion / missing output files
     elif premature_sigs or agent_mismatch_contracts:
         subcase_id = "5d"
         subtype = "task_understanding" if not premature_sigs else "premature_termination"
         code = "AGENT_TASK_UNDERSTANDING" if not premature_sigs else "AGENT_PREMATURE_TERMINATION"
-        summary = (
-            f"Agent failed to satisfy explicit output file or JSON schema requirements (`{fail_text[:160] or 'missing required output'}`)."
-        )
-        fud_ref = premature_sigs[0]["event_ref"] if premature_sigs else (
-            agent_mismatch_contracts[0]["contract_id"]
-            if agent_mismatch_contracts
-            else (timeline[-1]["event_id"] if timeline else "ver:fail_log")
+        summary = f"Agent failed to satisfy explicit output file or JSON schema requirements (`{fail_text[:160] or 'missing required output'}`)."
+        fud_ref = (
+            premature_sigs[0]["event_ref"]
+            if premature_sigs
+            else (
+                agent_mismatch_contracts[0]["contract_id"]
+                if agent_mismatch_contracts
+                else (timeline[-1]["event_id"] if timeline else "ver:fail_log")
+            )
         )
         skill_prescription = None
-    else:
-        subcase_id = "else"
+    # Subcase 5e: Inaccurate output / calculation error backed by unverified output signal
+    elif unverified_output_sigs and fail_text:
+        subcase_id = "5e"
         subtype = "result_validation"
         code = "AGENT_RESULT_VALIDATION"
-        summary = f"Agent completed execution with trajectory actions, but produced inaccurate physical/numerical values: {fail_text[:200]}"
-        fud_ref = agent_timeline_events[-1]["event_id"] if agent_timeline_events else ev_refs[0]
+        summary = f"Agent wrote results.json without sanity validation, producing inaccurate physical/numerical values: {fail_text[:200]}"
+        fud_ref = unverified_output_sigs[0]["event_ref"]
         skill_prescription = None
+    else:
+        ctx.trace.record(
+            gate_id="gate6_agent_primary",
+            matched=False,
+            reason="no positive agent causal evidence matches subcases 5a-5e",
+        )
+        return None
 
     prc = attach_confidence_metadata(
         {
@@ -270,7 +217,14 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         gate_id="gate6_agent_primary",
         matched=True,
         reason=f"positive agent evidence ({code})",
-        checks={"unrecovered_sci": len(unrecovered_sci_obs), "repeated_failed_action": len(repeated_fail_sigs), "dependency_search_attempted": len(dep_search_sigs), "premature_completion": len(premature_sigs), "agent_mismatch_contracts": len(agent_mismatch_contracts), "agent_timeline_events": len(agent_timeline_events)},
+        checks={
+            "unrecovered_sci": len(unrecovered_sci_obs),
+            "repeated_failed_action": len(repeated_fail_sigs),
+            "dependency_search_attempted": len(dep_search_sigs),
+            "premature_completion": len(premature_sigs),
+            "agent_mismatch_contracts": len(agent_mismatch_contracts),
+            "agent_timeline_events": len(agent_timeline_events),
+        },
         subcase_id=subcase_id,
     )
 

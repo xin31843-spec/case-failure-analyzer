@@ -19,6 +19,7 @@ It also closes three branches that had no test coverage at all before: rule 3b
 (agent never started, no infra evidence), and the validator's FALSE_AGENT_BLAME
 and POSITIVE_AGENT_EVIDENCE violation paths.
 """
+
 from __future__ import annotations
 
 import json
@@ -139,8 +140,10 @@ def _contract(alignment: str, **kw: Any) -> Dict[str, Any]:
     return base
 
 
-def _agent_event() -> Dict[str, Any]:
-    return {"event_id": "trajectory:step:9:tool:0", "actor": "agent", "action": "write"}
+def _agent_event(**kw: Any) -> Dict[str, Any]:
+    base = {"event_id": "trajectory:step:9:tool:0", "actor": "agent", "action": "write"}
+    base.update(kw)
+    return base
 
 
 # ── decision table ───────────────────────────────────────────────────────────
@@ -152,14 +155,24 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
     (
         "gate0 via verification_status",
         _evidence(runtime=_runtime(verification_status="passed")),
-        {"gate_id": "gate0_passed", "category": "none", "code": "NONE",
-         "verdict": "passed", "failure_stage": "none"},
+        {
+            "gate_id": "gate0_passed",
+            "category": "none",
+            "code": "NONE",
+            "verdict": "passed",
+            "failure_stage": "none",
+        },
     ),
     (
         "gate0 via reward >= 1.0",
         _evidence(runtime=_runtime(verification_status=None, reward=1.0)),
-        {"gate_id": "gate0_passed", "category": "none", "code": "NONE",
-         "verdict": "passed", "failure_stage": "none"},
+        {
+            "gate_id": "gate0_passed",
+            "category": "none",
+            "code": "NONE",
+            "verdict": "passed",
+            "failure_stage": "none",
+        },
     ),
     (
         "gate1a network failure before agent start (rule 3a)",
@@ -167,9 +180,13 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
             runtime=_runtime(agent_started=False, verifier_started=False),
             error_observations=[_infra_error("INFRA_EXTERNAL_NETWORK")],
         ),
-        {"gate_id": "gate1a_infra_prestartup", "category": "infra",
-         "code": "INFRA_EXTERNAL_NETWORK", "verdict": "errored",
-         "failure_stage": "environment_build"},
+        {
+            "gate_id": "gate1a_infra_prestartup",
+            "category": "infra",
+            "code": "INFRA_EXTERNAL_NETWORK",
+            "verdict": "errored",
+            "failure_stage": "environment_build",
+        },
     ),
     (
         "gate1a generic container build failure before agent start",
@@ -177,15 +194,23 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
             runtime=_runtime(agent_started=False, verifier_started=False),
             error_observations=[_infra_error("INFRA_IMAGE_PULL_FAILED")],
         ),
-        {"gate_id": "gate1a_infra_prestartup", "category": "infra",
-         "code": "INFRA_IMAGE_PULL_FAILED", "verdict": "errored"},
+        {
+            "gate_id": "gate1a_infra_prestartup",
+            "category": "infra",
+            "code": "INFRA_IMAGE_PULL_FAILED",
+            "verdict": "errored",
+        },
     ),
     (
         "gate1b pre-startup with no infra evidence (rule 3b)",
         _evidence(runtime=_runtime(agent_started=False, verifier_started=False)),
-        {"gate_id": "gate1b_unknown_no_evidence", "category": "unknown",
-         "code": "UNKNOWN_INSUFFICIENT_EVIDENCE", "verdict": "errored",
-         "failure_stage": "unknown"},
+        {
+            "gate_id": "gate1b_unknown_no_evidence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+            "verdict": "errored",
+            "failure_stage": "unknown",
+        },
     ),
     (
         "gate2 case contract defect",
@@ -193,41 +218,66 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
             contract_observations=[_contract("case_defect")],
             verifier_observations=[_fail_log("FAIL: missing asset")],
         ),
-        {"gate_id": "gate2_case_definition", "category": "case",
-         "code": "CASE_MISSING_ASSET", "verdict": "failed",
-         "failure_stage": "agent_execution"},
+        {
+            "gate_id": "gate2_case_definition",
+            "category": "case",
+            "code": "CASE_MISSING_ASSET",
+            "verdict": "failed",
+            "failure_stage": "agent_execution",
+        },
     ),
     (
         "gate3 verifier internal crash (rule 5b)",
         _evidence(
             verifier_observations=[
-                {"obs_id": "ver:crash", "type": "verifier_internal_crash",
-                 "summary": "FileNotFoundError: /tmp/verify_tmp/refs.json"},
+                {
+                    "obs_id": "ver:crash",
+                    "type": "verifier_internal_crash",
+                    "summary": "FileNotFoundError: /tmp/verify_tmp/refs.json",
+                },
                 _fail_log("FAIL: verifier crashed"),
             ],
         ),
-        {"gate_id": "gate3_verifier_defect", "category": "verifier",
-         "verdict": "failed", "failure_stage": "verifier_execution"},
+        {
+            "gate_id": "gate3_verifier_defect",
+            "category": "verifier",
+            "verdict": "failed",
+            "failure_stage": "verifier_execution",
+        },
     ),
     (
         "gate3 direct-bound parser hazard",
         _evidence(
             verifier_observations=[
                 _fail_log("FAIL: could not parse 'VAL= -0.12345D+03'"),
-                {"obs_id": "ver:hazard:1", "type": "parser_hazard", "triggered": True,
-                 "failure_binding": "direct", "summary": "missing D exponent"},
+                {
+                    "obs_id": "ver:hazard:1",
+                    "type": "parser_hazard",
+                    "triggered": True,
+                    "failure_binding": "direct",
+                    "summary": "missing D exponent",
+                },
             ],
         ),
-        {"gate_id": "gate3_verifier_defect", "category": "verifier",
-         "code": "VERIFIER_REGEX_OR_PARSER_DEFECT", "verdict": "failed"},
+        {
+            "gate_id": "gate3_verifier_defect",
+            "category": "verifier",
+            "code": "VERIFIER_REGEX_OR_PARSER_DEFECT",
+            "verdict": "failed",
+        },
     ),
     (
         "gate3 abstains when a hazard is not causally bound (rule 5)",
         _evidence(
             verifier_observations=[
                 _fail_log("FAIL: ENERGY mismatch: got 9.99E+02, expected reference 1.23D+03"),
-                {"obs_id": "ver:hazard:1", "type": "parser_hazard", "triggered": False,
-                 "failure_binding": "none", "summary": "unrelated D exponent"},
+                {
+                    "obs_id": "ver:hazard:1",
+                    "type": "parser_hazard",
+                    "triggered": False,
+                    "failure_binding": "none",
+                    "summary": "unrelated D exponent",
+                },
             ],
             timeline=[_agent_event()],
         ),
@@ -237,91 +287,149 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
         "gate4 structured numerical divergence",
         _evidence(
             verifier_observations=[
-                _fail_log("FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 "
-                          "(ensemble average matches)"),
+                _fail_log(
+                    "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 "
+                    "(ensemble average matches)"
+                ),
             ],
         ),
-        {"gate_id": "gate4_numerical_divergence", "category": "numerical",
-         "code": "NUMERICAL_TRAJECTORY_DIVERGENCE", "verdict": "failed"},
+        {
+            "gate_id": "gate4_numerical_divergence",
+            "category": "verifier",
+            "code": "VERIFIER_TOLERANCE_TOO_STRICT",
+            "verdict": "failed",
+        },
     ),
     (
         "gate4 abstains on a bare keyword (rule 1)",
         _evidence(verifier_observations=[_fail_log("FAIL: the run looks chaotic")]),
-        {"not_gate_id": "gate4_numerical_divergence", "not_category": "numerical"},
+        {"not_gate_id": "gate4_numerical_divergence", "not_category": "verifier"},
     ),
     (
         "gate5 failed with no positive agent evidence (rule 4)",
         _evidence(verifier_observations=[_fail_log("FAIL: agent output absent")]),
-        {"gate_id": "gate5_insufficient_positive_evidence", "category": "unknown",
-         "code": "UNKNOWN_INSUFFICIENT_EVIDENCE", "verdict": "failed",
-         "failure_stage": "unknown"},
+        {
+            "gate_id": "gate5_insufficient_positive_evidence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+            "verdict": "failed",
+            "failure_stage": "unknown",
+        },
     ),
     (
         "gate6 subcase 5a unrecovered solver error + repeated action",
-        _evidence(scientific_observations=[_sci("scf_convergence_not_achieved")],
-                  behavioral_signals=[_sig("repeated_failed_action")],
-                  verifier_observations=[_fail_log("FAIL: SCF not converged")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "5a", "category": "agent",
-         "code": "AGENT_ERROR_DIAGNOSIS", "failure_stage": "agent_execution"},
+        _evidence(
+            scientific_observations=[_sci("scf_convergence_not_achieved")],
+            behavioral_signals=[_sig("repeated_failed_action")],
+            verifier_observations=[_fail_log("FAIL: SCF not converged")],
+        ),
+        {
+            "gate_id": "gate6_agent_primary",
+            "subcase_id": "5a",
+            "category": "agent",
+            "code": "AGENT_ERROR_DIAGNOSIS",
+            "failure_stage": "agent_execution",
+        },
     ),
     (
         "gate6 subcase 5b missing potential, no dependency search",
-        _evidence(scientific_observations=[_sci("basis_or_potential_missing")],
-                  verifier_observations=[_fail_log("FAIL: basis not found")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "5b", "category": "agent",
-         "code": "AGENT_PATH_OR_DEPENDENCY_DISCOVERY"},
+        _evidence(
+            scientific_observations=[_sci("basis_or_potential_missing")],
+            verifier_observations=[_fail_log("FAIL: basis not found")],
+        ),
+        {
+            "gate_id": "gate6_agent_primary",
+            "subcase_id": "5b",
+            "category": "agent",
+            "code": "AGENT_PATH_OR_DEPENDENCY_DISCOVERY",
+        },
     ),
     (
         "gate6 subcase 5c continuation mismatch",
-        _evidence(scientific_observations=[_sci("restart_or_timestep_continuation_mismatch")],
-                  verifier_observations=[_fail_log("FAIL: continuation diverged")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "5c", "category": "agent",
-         "code": "AGENT_SCIENTIFIC_PARAMETER_SELECTION"},
+        _evidence(
+            scientific_observations=[_sci("restart_or_timestep_continuation_mismatch")],
+            verifier_observations=[_fail_log("FAIL: continuation diverged")],
+        ),
+        {
+            "gate_id": "gate6_agent_primary",
+            "subcase_id": "5c",
+            "category": "agent",
+            "code": "AGENT_SCIENTIFIC_PARAMETER_SELECTION",
+        },
     ),
     (
-        "gate6 subcase 5c_ext other unrecovered solver family",
-        _evidence(scientific_observations=[_sci("some_other_solver_family")],
-                  verifier_observations=[_fail_log("FAIL: solver error")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "5c_ext", "category": "agent",
-         "code": "AGENT_SCIENTIFIC_PARAMETER_SELECTION"},
+        "gate6 abstains on isolated other unrecovered solver family (rule 4)",
+        _evidence(
+            scientific_observations=[_sci("some_other_solver_family")],
+            verifier_observations=[_fail_log("FAIL: solver error")],
+        ),
+        {
+            "gate_id": "gate5_insufficient_positive_evidence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+        },
     ),
     (
         "gate6 subcase 5d premature completion",
-        _evidence(behavioral_signals=[_sig("premature_completion")],
-                  verifier_observations=[_fail_log("FAIL: required output missing")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "5d", "category": "agent",
-         "code": "AGENT_PREMATURE_TERMINATION"},
+        _evidence(
+            behavioral_signals=[_sig("premature_completion")],
+            verifier_observations=[_fail_log("FAIL: required output missing")],
+        ),
+        {
+            "gate_id": "gate6_agent_primary",
+            "subcase_id": "5d",
+            "category": "agent",
+            "code": "AGENT_PREMATURE_TERMINATION",
+        },
     ),
     (
         "gate6 subcase 5d agent_mismatch contract",
-        _evidence(contract_observations=[_contract("agent_mismatch")],
-                  verifier_observations=[_fail_log("FAIL: schema mismatch")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "5d", "category": "agent",
-         "code": "AGENT_TASK_UNDERSTANDING"},
+        _evidence(
+            contract_observations=[_contract("agent_mismatch")],
+            verifier_observations=[_fail_log("FAIL: schema mismatch")],
+        ),
+        {
+            "gate_id": "gate6_agent_primary",
+            "subcase_id": "5d",
+            "category": "agent",
+            "code": "AGENT_TASK_UNDERSTANDING",
+        },
     ),
     (
-        "gate6 subcase else: agent acted, values wrong",
-        _evidence(timeline=[_agent_event()],
-                  verifier_observations=[_fail_log("FAIL: ENERGY mismatch: got 1.0 expected 2.0")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "else", "category": "agent",
-         "code": "AGENT_RESULT_VALIDATION"},
+        "gate6 abstains when agent acted but no causal signals exist (rule 4)",
+        _evidence(
+            timeline=[_agent_event()],
+            verifier_observations=[_fail_log("FAIL: ENERGY mismatch: got 1.0 expected 2.0")],
+        ),
+        {
+            "gate_id": "gate5_insufficient_positive_evidence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+        },
     ),
     (
         "precedence: 5a wins over 5b when both apply",
-        _evidence(scientific_observations=[_sci("basis_or_potential_missing")],
-                  behavioral_signals=[_sig("repeated_failed_action")],
-                  verifier_observations=[_fail_log("FAIL: basis not found")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "5a",
-         "code": "AGENT_ERROR_DIAGNOSIS"},
+        _evidence(
+            scientific_observations=[_sci("basis_or_potential_missing")],
+            behavioral_signals=[_sig("repeated_failed_action")],
+            verifier_observations=[_fail_log("FAIL: basis not found")],
+        ),
+        {"gate_id": "gate6_agent_primary", "subcase_id": "5a", "code": "AGENT_ERROR_DIAGNOSIS"},
     ),
     (
         "precedence: 5b wins over 5c when both families present",
-        _evidence(scientific_observations=[
-            _sci("basis_or_potential_missing", sci_id="sci:basis"),
-            _sci("restart_or_timestep_continuation_mismatch", sci_id="sci:restart"),
-        ], verifier_observations=[_fail_log("FAIL: both")]),
-        {"gate_id": "gate6_agent_primary", "subcase_id": "5b",
-         "code": "AGENT_PATH_OR_DEPENDENCY_DISCOVERY"},
+        _evidence(
+            scientific_observations=[
+                _sci("basis_or_potential_missing", sci_id="sci:basis"),
+                _sci("restart_or_timestep_continuation_mismatch", sci_id="sci:restart"),
+            ],
+            verifier_observations=[_fail_log("FAIL: both")],
+        ),
+        {
+            "gate_id": "gate6_agent_primary",
+            "subcase_id": "5b",
+            "code": "AGENT_PATH_OR_DEPENDENCY_DISCOVERY",
+        },
     ),
 ]
 
@@ -335,11 +443,21 @@ class TestAttributionDecisionTable(unittest.TestCase):
                 selected = trace["selected"]
                 prc = analysis["primary_root_cause"]
 
-                for key in ("gate_id", "subcase_id", "category", "code",
-                            "verdict", "failure_stage"):
+                for key in (
+                    "gate_id",
+                    "subcase_id",
+                    "category",
+                    "code",
+                    "verdict",
+                    "failure_stage",
+                ):
                     if key in expected:
-                        actual = selected.get(key) if key in ("gate_id", "subcase_id") else (
-                            prc.get(key) if key in ("category", "code") else analysis.get(key)
+                        actual = (
+                            selected.get(key)
+                            if key in ("gate_id", "subcase_id")
+                            else (
+                                prc.get(key) if key in ("category", "code") else analysis.get(key)
+                            )
                         )
                         self.assertEqual(actual, expected[key], f"{label}: {key}")
 
@@ -371,13 +489,19 @@ class TestAttributionDecisionTable(unittest.TestCase):
 
                 trace = analysis["decision_trace"]
                 ids = [e["gate_id"] for e in trace["evaluated"]]
-                self.assertEqual(ids, list(GATE_ORDER)[: len(ids)],
-                                 f"{label}: evaluated must be a GATE_ORDER prefix")
-                self.assertTrue(trace["evaluated"][-1]["matched"],
-                                f"{label}: last evaluated gate must be the match")
+                self.assertEqual(
+                    ids,
+                    list(GATE_ORDER)[: len(ids)],
+                    f"{label}: evaluated must be a GATE_ORDER prefix",
+                )
+                self.assertTrue(
+                    trace["evaluated"][-1]["matched"],
+                    f"{label}: last evaluated gate must be the match",
+                )
                 self.assertEqual(trace["selected"]["gate_id"], ids[-1], label)
-                self.assertEqual(trace["selected"]["code"],
-                                 analysis["primary_root_cause"]["code"], label)
+                self.assertEqual(
+                    trace["selected"]["code"], analysis["primary_root_cause"]["code"], label
+                )
 
     def test_trace_is_json_serializable_and_bounded(self) -> None:
         for label, evidence, _ in DECISION_TABLE:
@@ -483,9 +607,16 @@ class TestValidatorHardRuleBranches(unittest.TestCase):
         analysis["primary_root_cause"]["code"] = "AGENT_RESULT_VALIDATION"
         analysis["evidence_refs"] = ["art:trial_result"]
         analysis["competing_hypotheses"] = [
-            {"hypothesis_id": "H1", "category": "agent", "subtype": "result_validation",
-             "claim": "x", "evidence_for": ["art:trial_result"], "evidence_against": [],
-             "missing_evidence": [], "counterfactual_test": "y"},
+            {
+                "hypothesis_id": "H1",
+                "category": "agent",
+                "subtype": "result_validation",
+                "claim": "x",
+                "evidence_for": ["art:trial_result"],
+                "evidence_against": [],
+                "missing_evidence": [],
+                "counterfactual_test": "y",
+            },
         ]
         ok, errors = validate_all(evidence, analysis, None)
         self.assertFalse(ok)
@@ -501,6 +632,98 @@ class TestValidatorHardRuleBranches(unittest.TestCase):
         ok, errors = validate_all(evidence, analysis, None)
         self.assertFalse(ok)
         self.assertTrue(any("decision_trace.evaluated" in e for e in errors), errors)
+
+
+class TestAgentAttributionTightening(unittest.TestCase):
+    """
+    Negative tests verifying that tightening the positive agent evidence gate
+    prevents false agent blame when causal links are missing.
+    """
+
+    def test_isolated_solver_error_without_signals_does_not_blame_agent(self) -> None:
+        ev = _evidence(
+            scientific_observations=[_sci("generic_linear_solver_divergence")],
+            verifier_observations=[_fail_log("FAIL: solver error")],
+        )
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        self.assertEqual(an["primary_root_cause"]["category"], "unknown")
+        self.assertEqual(an["primary_root_cause"]["code"], "UNKNOWN_INSUFFICIENT_EVIDENCE")
+
+    def test_agent_command_with_value_mismatch_without_signal_does_not_blame_agent(self) -> None:
+        ev = _evidence(
+            timeline=[_agent_event(cmd="python3 run.py")],
+            verifier_observations=[_fail_log("FAIL: value mismatch: got 1.0 expected 2.0")],
+        )
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        self.assertEqual(an["primary_root_cause"]["category"], "unknown")
+        self.assertEqual(an["primary_root_cause"]["code"], "UNKNOWN_INSUFFICIENT_EVIDENCE")
+
+    def test_agent_with_unverified_output_and_value_mismatch_attributes_to_agent(self) -> None:
+        ev = _evidence(
+            behavioral_signals=[
+                {
+                    "signal_id": "sig:unverified_output",
+                    "signal_type": "unverified_output",
+                    "description": "Agent wrote results.json without verification",
+                    "event_ref": "traj:write_step",
+                    "source_pointer": "/steps/0",
+                }
+            ],
+            verifier_observations=[_fail_log("FAIL: value mismatch: got 1.0 expected 2.0")],
+        )
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        self.assertEqual(an["primary_root_cause"]["category"], "agent")
+        self.assertEqual(an["primary_root_cause"]["code"], "AGENT_RESULT_VALIDATION")
+        self.assertEqual(an["first_unrecovered_deviation"]["event_ref"], "traj:write_step")
+
+    def test_validator_rejects_generic_agent_timeline_event_as_positive_evidence(self) -> None:
+        ev = _evidence(
+            timeline=[_agent_event(event_id="traj:step:1", cmd="ls -la")],
+            verifier_observations=[_fail_log("FAIL: value mismatch: got 1.0 expected 2.0")],
+        )
+        an = {
+            "schema_version": "failure-analysis-v1",
+            "case_id": "test_case",
+            "trial_name": "trial_1",
+            "verdict": "failed",
+            "failure_stage": "agent_execution",
+            "detection_stage": "verifier_execution",
+            "first_unrecovered_deviation": {
+                "status": "identified",
+                "event_ref": "traj:step:1",
+                "summary": "Agent ran ls",
+            },
+            "failure_manifestation": {"type": "wrong_value", "summary": "fail"},
+            "primary_root_cause": {
+                "category": "agent",
+                "subtype": "result_validation",
+                "code": "AGENT_RESULT_VALIDATION",
+                "confidence": 0.5,
+                "confidence_kind": "heuristic_evidence_score",
+                "evidence_strength": "medium",
+                "summary": "Agent produced wrong values",
+            },
+            "contributing_factors": [],
+            "competing_hypotheses": [
+                {
+                    "hypothesis_id": "H1",
+                    "category": "agent",
+                    "subtype": "result_validation",
+                    "claim": "Agent produced wrong values",
+                    "evidence_for": ["traj:step:1"],
+                    "evidence_against": [],
+                    "missing_evidence": [],
+                    "counterfactual_test": "Fix calculation",
+                }
+            ],
+            "evidence_refs": ["traj:step:1"],
+            "excluded_hypotheses": [],
+            "recommended_actions": [{"owner": "Agent", "action": "Fix calculation"}],
+            "skill_prescription": None,
+        }
+        ok, errors = validate_all(ev, an, None)
+        self.assertFalse(ok)
+        self.assertTrue(any("POSITIVE_AGENT_EVIDENCE" in e for e in errors), errors)
 
 
 if __name__ == "__main__":

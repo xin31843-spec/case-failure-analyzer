@@ -10,15 +10,20 @@ repository - these modules are maintained by hand from here, and
 `tests/test_attribution_characterization.py` will show any behavior change as a
 reviewable baseline diff.
 """
+
 from __future__ import annotations
 
+from ..families import (
+    CONTINUATION_FAMILIES,
+    DEPENDENCY_DISCOVERY_FAMILIES,
+    matches_family as _matches_family,
+)
 from confidence import attach_confidence_metadata
 import re
 
 from typing import Any, Dict, Optional
 
 from ..context import AttributionContext
-
 
 
 def gate5_insufficient_positive_evidence(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
@@ -36,17 +41,22 @@ def gate5_insufficient_positive_evidence(ctx: AttributionContext) -> Optional[Di
     runtime = ctx.runtime
     trial_name = ctx.trial_name
     unrecovered_sci_obs = ctx.unrecovered_sci_obs
+    unverified_output_sigs = ctx.unverified_output_sigs
     verifier_started = ctx.verifier_started
 
     has_positive_agent_evidence = bool(
-        unrecovered_sci_obs
-        or repeated_fail_sigs
+        (unrecovered_sci_obs and repeated_fail_sigs)
+        or (
+            any(_matches_family(s, DEPENDENCY_DISCOVERY_FAMILIES) for s in unrecovered_sci_obs)
+            and not dep_search_sigs
+        )
+        or any(_matches_family(s, CONTINUATION_FAMILIES) for s in unrecovered_sci_obs)
         or premature_sigs
         or agent_mismatch_contracts
         or (
-            agent_timeline_events
+            unverified_output_sigs
             and fail_text
-            and re.search(r'(?:got\s+[-+\d.eEdD]+|mismatch|missing key|Missing:)', fail_text, re.IGNORECASE)
+            and re.search(r"(?:got\s+[-+\d.eEdD]+|mismatch|wrong value)", fail_text, re.IGNORECASE)
         )
     )
 
@@ -55,7 +65,14 @@ def gate5_insufficient_positive_evidence(ctx: AttributionContext) -> Optional[Di
             gate_id="gate5_insufficient_positive_evidence",
             matched=False,
             reason="positive agent evidence exists; attribution continues to gate 6",
-            checks={"unrecovered_sci": len(unrecovered_sci_obs), "repeated_failed_action": len(repeated_fail_sigs), "dependency_search_attempted": len(dep_search_sigs), "premature_completion": len(premature_sigs), "agent_mismatch_contracts": len(agent_mismatch_contracts), "agent_timeline_events": len(agent_timeline_events)},
+            checks={
+                "unrecovered_sci": len(unrecovered_sci_obs),
+                "repeated_failed_action": len(repeated_fail_sigs),
+                "dependency_search_attempted": len(dep_search_sigs),
+                "premature_completion": len(premature_sigs),
+                "agent_mismatch_contracts": len(agent_mismatch_contracts),
+                "agent_timeline_events": len(agent_timeline_events),
+            },
         )
         return None
 
@@ -101,7 +118,14 @@ def gate5_insufficient_positive_evidence(ctx: AttributionContext) -> Optional[Di
         gate_id="gate5_insufficient_positive_evidence",
         matched=True,
         reason="failed with no positive evidence implicating the agent",
-        checks={"unrecovered_sci": len(unrecovered_sci_obs), "repeated_failed_action": len(repeated_fail_sigs), "dependency_search_attempted": len(dep_search_sigs), "premature_completion": len(premature_sigs), "agent_mismatch_contracts": len(agent_mismatch_contracts), "agent_timeline_events": len(agent_timeline_events)},
+        checks={
+            "unrecovered_sci": len(unrecovered_sci_obs),
+            "repeated_failed_action": len(repeated_fail_sigs),
+            "dependency_search_attempted": len(dep_search_sigs),
+            "premature_completion": len(premature_sigs),
+            "agent_mismatch_contracts": len(agent_mismatch_contracts),
+            "agent_timeline_events": len(agent_timeline_events),
+        },
     )
 
     return {
@@ -119,7 +143,9 @@ def gate5_insufficient_positive_evidence(ctx: AttributionContext) -> Optional[Di
         },
         "failure_manifestation": {
             "type": "unattributed_verification_failure" if fail_text else "unknown_failure",
-            "summary": fail_text[:240] if fail_text else "Trial failed without positive causal evidence.",
+            "summary": fail_text[:240]
+            if fail_text
+            else "Trial failed without positive causal evidence.",
         },
         "primary_root_cause": prc,
         "contributing_factors": [],

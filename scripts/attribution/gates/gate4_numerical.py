@@ -10,6 +10,7 @@ repository - these modules are maintained by hand from here, and
 `tests/test_attribution_characterization.py` will show any behavior change as a
 reviewable baseline diff.
 """
+
 from __future__ import annotations
 
 from confidence import attach_confidence_metadata
@@ -20,7 +21,6 @@ from typing import Any, Dict, Optional
 from ..context import AttributionContext
 
 
-
 def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     case_id = ctx.case_id
     fail_log_obs = ctx.fail_log_obs
@@ -29,8 +29,16 @@ def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, An
     trial_name = ctx.trial_name
 
     has_structured_numerical = bool(
-        re.search(r'(?:trajectory_rmsd\s*=\s*[\d.]+|instantaneous_position.*?>\s*[\d.]+)', fail_text, re.IGNORECASE)
-        and re.search(r'(?:ensemble average matches|ensemble.*within tolerance|conserved.*matches)', fail_text, re.IGNORECASE)
+        re.search(
+            r"(?:trajectory_rmsd\s*=\s*[\d.]+|instantaneous_position.*?>\s*[\d.]+)",
+            fail_text,
+            re.IGNORECASE,
+        )
+        and re.search(
+            r"(?:ensemble average matches|ensemble.*within tolerance|conserved.*matches)",
+            fail_text,
+            re.IGNORECASE,
+        )
     )
 
     if not has_structured_numerical:
@@ -45,29 +53,29 @@ def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, An
     ev_refs = ["ver:fail_log"] if fail_log_obs else ["art:trial_result"]
     prc = attach_confidence_metadata(
         {
-            "category": "numerical",
-            "subtype": "trajectory_divergence",
-            "code": "NUMERICAL_TRAJECTORY_DIVERGENCE",
-            "summary": "Floating-point/parallel accumulation caused pointwise MD trajectory drift despite valid ensemble statistics.",
+            "category": "verifier",
+            "subtype": "tolerance_too_strict",
+            "code": "VERIFIER_TOLERANCE_TOO_STRICT",
+            "summary": "Verifier compared instantaneous late-step coordinates/energies rather than ensemble averages despite physical/numerical chaos.",
         },
         direct_causal_evidence=2,
         cross_source_corroboration=1,
     )
-    cf_tol = attach_confidence_metadata(
+    cf_case = attach_confidence_metadata(
         {
-            "category": "verifier",
-            "subtype": "tolerance_too_strict",
-            "code": "VERIFIER_TOLERANCE_TOO_STRICT",
-            "summary": "Verifier compared instantaneous late-step coordinates/energies rather than ensemble averages.",
+            "category": "case",
+            "subtype": "ambiguous_contract",
+            "code": "CASE_AMBIGUOUS_CONTRACT",
+            "summary": "Benchmark case did not fix RNG seeds or specify ensemble statistical verification bounds.",
         },
         direct_causal_evidence=1,
     )
     h1 = attach_confidence_metadata(
         {
             "hypothesis_id": "H1",
-            "category": "numerical",
-            "subtype": "trajectory_divergence",
-            "claim": "Lyapunov-sensitive MD trajectory divergence across float accumulation while ensemble averages match.",
+            "category": "verifier",
+            "subtype": "tolerance_too_strict",
+            "claim": "Verifier evaluated instantaneous trajectory/position divergence rather than ensemble averages, causing failure despite valid ensemble statistics.",
             "evidence_for": ev_refs,
             "evidence_against": [],
             "missing_evidence": [],
@@ -115,7 +123,7 @@ def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, An
             "summary": fail_text[:240],
         },
         "primary_root_cause": prc,
-        "contributing_factors": [cf_tol],
+        "contributing_factors": [cf_case],
         "competing_hypotheses": [h1, h2],
         "evidence_refs": ev_refs,
         "excluded_hypotheses": [

@@ -8,6 +8,7 @@ Renders:
   - `report.en.md` (`lang="en"`): Standalone pure English report (4 core sections)
   - `skill-prescription.md`, `skill-prescription.zh.md`, `skill-prescription.en.md` (when eligible)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -77,23 +78,215 @@ def render_report_markdown(
     evidence: Dict[str, Any],
     analysis: Dict[str, Any],
     lang: str = "bilingual",
+    output_format: str = "both",
 ) -> str:
     if lang == "en":
-        return _render_english_edition(evidence, analysis, standalone=True)
+        return _render_english_edition(
+            evidence, analysis, standalone=True, output_format=output_format
+        )
     if lang == "zh":
-        return _render_chinese_bilingual_core(evidence, analysis, include_en_labels=False)
+        return _render_chinese_bilingual_core(
+            evidence, analysis, include_en_labels=False, output_format=output_format
+        )
 
     # Default `bilingual`: Part I (Chinese-English side-by-side with canonical 4 section headers)
     # followed by Part II (Complete English Edition)
-    part_zh_bi = _render_chinese_bilingual_core(evidence, analysis, include_en_labels=True)
-    part_en = _render_english_edition(evidence, analysis, standalone=False)
+    part_zh_bi = _render_chinese_bilingual_core(
+        evidence, analysis, include_en_labels=True, output_format=output_format
+    )
+    part_en = _render_english_edition(
+        evidence, analysis, standalone=False, output_format=output_format
+    )
     return f"{part_zh_bi}\n---\n\n{part_en}"
+
+
+CATEGORY_LABELS_ZH: Dict[str, str] = {
+    "agent": "智能体决策与执行失误 (Agent Decisions & Execution)",
+    "case": "基准题目与规格设计缺陷 (Case Specification & Design)",
+    "infra": "运行环境与系统设施缺陷 (Environment & Infrastructure)",
+    "verifier": "评测验证与规则判定缺陷 (Evaluation & Verifier Logic)",
+    "unknown": "未分类或信息缺失 (Unknown/Unclassified)",
+    "none": "无 (用例测试通过) (None - Passed)",
+}
+
+CATEGORY_LABELS_EN: Dict[str, str] = {
+    "agent": "Agent Decisions & Execution",
+    "case": "Case Specification & Design",
+    "infra": "Environment & Infrastructure",
+    "verifier": "Evaluation & Verifier Logic",
+    "unknown": "Unknown/Unclassified",
+    "none": "None (Passed)",
+}
+
+
+def _render_evidence_file_pointers(
+    evidence: Dict[str, Any],
+    lang: str = "zh",
+    output_format: str = "both",
+) -> List[str]:
+    artifacts = evidence.get("artifacts") or []
+    art_map = {a.get("rel_path"): a for a in artifacts if a.get("rel_path")}
+
+    lines: List[str] = []
+    if lang == "zh":
+        lines.append("\n### 证据链来源文件索引 (Evidence File Pointers)")
+        # 1. Trajectory
+        traj = art_map.get("agent/trajectory.json")
+        cc = art_map.get("agent/claude-code.txt")
+        traj_items = []
+        if traj and traj.get("exists"):
+            traj_items.append("`agent/trajectory.json` (交互轮次及工具调用)")
+        elif traj:
+            traj_items.append("`agent/trajectory.json` 【缺失 / Missing】")
+        if cc and cc.get("exists"):
+            traj_items.append("`agent/claude-code.txt` (Agent 执行输出)")
+        elif cc and not traj:
+            traj_items.append("`agent/claude-code.txt` 【缺失 / Missing】")
+        if traj_items:
+            lines.append("- **交互轨迹与代码记录**: " + ", ".join(traj_items))
+        else:
+            lines.append("- **交互轨迹与代码记录**: `agent/trajectory.json` 【缺失 / Missing】")
+
+        # 2. Verifier
+        vlog = art_map.get("verifier/verify.log")
+        vout = art_map.get("verifier/test-stdout.txt")
+        v_items = []
+        if vlog and vlog.get("exists"):
+            v_items.append("`verifier/verify.log` (评测判定日志)")
+        elif vlog:
+            v_items.append("`verifier/verify.log` 【缺失 / Missing】")
+        if vout and vout.get("exists"):
+            v_items.append("`verifier/test-stdout.txt` (测试输出)")
+        elif vout and not vlog:
+            v_items.append("`verifier/test-stdout.txt` 【缺失 / Missing】")
+        if v_items:
+            lines.append("- **验证器执行与判定日志**: " + ", ".join(v_items))
+        else:
+            lines.append("- **验证器执行与判定日志**: `verifier/verify.log` 【缺失 / Missing】")
+
+        # 3. Task
+        inst = art_map.get("instruction.md")
+        refs = art_map.get("tests/refs.json") or art_map.get("refs.json")
+        t_items = []
+        if inst and inst.get("exists"):
+            t_items.append("`instruction.md` (题目要求)")
+        elif inst:
+            t_items.append("`instruction.md` 【缺失 / Missing】")
+        if refs and refs.get("exists"):
+            t_items.append("`tests/refs.json` (参考真值)")
+        elif refs:
+            t_items.append("`tests/refs.json` 【缺失 / Missing】")
+        if t_items:
+            lines.append("- **任务定义与参考真值**: " + ", ".join(t_items))
+        else:
+            lines.append("- **任务定义与参考真值**: `instruction.md` (或 `solve.sh`)")
+
+        # 4. Results
+        res_json = art_map.get("results.json")
+        if res_json:
+            if res_json.get("exists"):
+                lines.append("- **计算产物提交**: 参见 `results.json` (Agent 最终生成数据)")
+            else:
+                lines.append(
+                    "- **计算产物提交**: `results.json` 【缺失 / Missing】(未生成有效产物)"
+                )
+
+        # 5. Output format
+        if output_format in ("json", "both"):
+            lines.append(
+                "- **全量因果证据矩阵**: 参见 `evidence.json` (含完整 `timeline`、`contract_observations` 与 `behavioral_signals`)"
+            )
+            lines.append(
+                "- **归因仲裁与候选假设**: 参见 `analysis.json` 与 `candidate-hypotheses.json`\n"
+            )
+        else:
+            lines.append(
+                "- **结构化归因产物**: 本次按 `--format markdown` 渲染，未生成独立的 `evidence.json` / `analysis.json`。\n"
+            )
+    else:
+        lines.append("\n### Evidence File Pointers")
+        # 1. Trajectory
+        traj = art_map.get("agent/trajectory.json")
+        cc = art_map.get("agent/claude-code.txt")
+        traj_items = []
+        if traj and traj.get("exists"):
+            traj_items.append("`agent/trajectory.json` (interaction turns & tool calls)")
+        elif traj:
+            traj_items.append("`agent/trajectory.json` [Missing]")
+        if cc and cc.get("exists"):
+            traj_items.append("`agent/claude-code.txt` (execution log)")
+        elif cc and not traj:
+            traj_items.append("`agent/claude-code.txt` [Missing]")
+        if traj_items:
+            lines.append("- **Agent Trajectory & Commands**: " + ", ".join(traj_items))
+        else:
+            lines.append("- **Agent Trajectory & Commands**: `agent/trajectory.json` [Missing]")
+
+        # 2. Verifier
+        vlog = art_map.get("verifier/verify.log")
+        vout = art_map.get("verifier/test-stdout.txt")
+        v_items = []
+        if vlog and vlog.get("exists"):
+            v_items.append("`verifier/verify.log` (judgment log)")
+        elif vlog:
+            v_items.append("`verifier/verify.log` [Missing]")
+        if vout and vout.get("exists"):
+            v_items.append("`verifier/test-stdout.txt` (verifier stdout)")
+        elif vout and not vlog:
+            v_items.append("`verifier/test-stdout.txt` [Missing]")
+        if v_items:
+            lines.append("- **Verifier Execution & Judgment**: " + ", ".join(v_items))
+        else:
+            lines.append("- **Verifier Execution & Judgment**: `verifier/verify.log` [Missing]")
+
+        # 3. Task
+        inst = art_map.get("instruction.md")
+        refs = art_map.get("tests/refs.json") or art_map.get("refs.json")
+        t_items = []
+        if inst and inst.get("exists"):
+            t_items.append("`instruction.md` (task prompt)")
+        elif inst:
+            t_items.append("`instruction.md` [Missing]")
+        if refs and refs.get("exists"):
+            t_items.append("`tests/refs.json` (ground truth)")
+        elif refs:
+            t_items.append("`tests/refs.json` [Missing]")
+        if t_items:
+            lines.append("- **Task Specification & Reference Values**: " + ", ".join(t_items))
+        else:
+            lines.append(
+                "- **Task Specification & Reference Values**: `instruction.md` (or `solve.sh`)"
+            )
+
+        # 4. Results
+        res_json = art_map.get("results.json")
+        if res_json:
+            if res_json.get("exists"):
+                lines.append("- **Simulation Output Submission**: See `results.json`")
+            else:
+                lines.append("- **Simulation Output Submission**: `results.json` [Missing]")
+
+        # 5. Output format
+        if output_format in ("json", "both"):
+            lines.append(
+                "- **Unified Evidence Matrix**: See `evidence.json` (contains chronological `timeline`, `contract_observations`, and `behavioral_signals`)"
+            )
+            lines.append(
+                "- **Structured Attribution & Decision**: See `analysis.json` and `candidate-hypotheses.json`\n"
+            )
+        else:
+            lines.append(
+                "- **Structured Analysis Artifacts**: Rendered with `--format markdown`; `evidence.json` / `analysis.json` were not written.\n"
+            )
+
+    return lines
 
 
 def _render_chinese_bilingual_core(
     evidence: Dict[str, Any],
     analysis: Dict[str, Any],
     include_en_labels: bool = True,
+    output_format: str = "both",
 ) -> str:
     case_id = analysis.get("case_id", evidence.get("case_id", "unknown"))
     trial_name = analysis.get("trial_name", evidence.get("trial_name", case_id))
@@ -109,6 +302,11 @@ def _render_chinese_bilingual_core(
     ev_strength = prc.get("evidence_strength", "medium")
     exec_status = runtime.get("execution_status", runtime.get("exit_status"))
 
+    cat = prc.get("category", "unknown")
+    subtype = prc.get("subtype", "unknown")
+    code = prc.get("code", "UNKNOWN")
+    cat_zh = CATEGORY_LABELS_ZH.get(cat, cat)
+
     lines: List[str] = []
     if include_en_labels:
         lines.append(
@@ -121,53 +319,62 @@ def _render_chinese_bilingual_core(
     else:
         lines.append(f"# 案例失败因果审计报告: `{case_id}` (`{trial_name}`)\n")
 
-    # 1. 诊断结论与运行态概览 (Merges Executive Summary + Case Status + Primary Root Cause without duplication)
+    # 1. 诊断结论与运行态概览
     sec1_title = (
         "## 1. 诊断结论与运行态概览 (Verdict & Root Cause Summary)\n"
         if include_en_labels
         else "## 1. 诊断结论与运行态概览\n"
     )
     lines.append(sec1_title)
+
+    direct_cause = manifestation.get("summary") or "N/A"
+    internal_cause = prc.get("summary") or manifestation.get("summary") or "N/A"
+
     if include_en_labels:
         lines.append(
-            f"- **Verdict & Gate / 最终裁定与运行门控**: `{verdict}` "
+            f"> 📌 **Root Cause Hierarchy / 根因分类归属**：[Major Category / 大类] {cat_zh} ➔ [Subcategory / 二级子类] `{subtype}` (`{code}`)  \n"
+            f"> ⚖️ **Verdict & Gate / 最终裁定与运行门控**：`{verdict}` "
             f"(Execution: `{exec_status}`, Verification: `{runtime.get('verification_status', 'unknown')}`, "
-            f"Reward: `{runtime.get('reward')}`, `agent_started={runtime.get('agent_started')}`, "
-            f"`verifier_started={runtime.get('verifier_started')}`)\n"
-            f"- **Primary Root Cause / 唯一主根因**: `{prc.get('category')}` / `{prc.get('subtype')}` "
-            f"(`{prc.get('code')}`, Confidence: **{conf_val:.2f}** [`{conf_kind}`, strength=`{ev_strength}`])\n"
-            f"- **Stage Transition / 发生阶段 → 检出阶段**: `{f_stage}` → `{d_stage}` "
-            f"(`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`)\n"
-            f"- **Causal Mechanism / 因果传导机制**: {prc.get('summary') or manifestation.get('summary') or 'N/A'}\n"
+            f"Reward: `{runtime.get('reward')}`, Gate: `agent_started={runtime.get('agent_started')}`, "
+            f"`verifier_started={runtime.get('verifier_started')}`)  \n"
+            f"> ⏱️ **Stage Transition / 阶段跃迁轨迹**：发生阶段 `{f_stage}` ➔ 检出阶段 `{d_stage}` "
+            f"(`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`)  \n"
+            f"> 🎯 **Direct Failure Cause / 具体失败表象**：{direct_cause}  \n"
+            f"> 🔍 **Internal Root Cause / 深层内部原因**：{internal_cause}  \n"
+            f"> 📊 **Evidence Confidence / 证据置信度**：**{conf_val:.2f}** [`{conf_kind}`, 强度=`{ev_strength}`]\n"
         )
     else:
         lines.append(
-            f"- **最终裁定与运行门控**: `{verdict}` "
+            f"> 📌 **根因分类归属**：【大类】{cat_zh} ➔ 【二级子类】`{subtype}` (`{code}`)  \n"
+            f"> ⚖️ **最终裁定与运行门控**：`{verdict}` "
             f"（执行状态: `{exec_status}`，验证状态: `{runtime.get('verification_status', 'unknown')}`，"
-            f"得分: `{runtime.get('reward')}`，`agent_started={runtime.get('agent_started')}`，"
-            f"`verifier_started={runtime.get('verifier_started')}`）\n"
-            f"- **唯一主根因**: `{prc.get('category')}` / `{prc.get('subtype')}` "
-            f"（`{prc.get('code')}`，证据置信度: **{conf_val:.2f}** [`{conf_kind}`, 强度=`{ev_strength}`]）\n"
-            f"- **发生阶段 → 检出阶段**: `{f_stage}` → `{d_stage}` "
-            f"（`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`）\n"
-            f"- **因果传导机制**: {prc.get('summary') or manifestation.get('summary') or 'N/A'}\n"
+            f"得分: `{runtime.get('reward')}`，启动门禁: `agent_started={runtime.get('agent_started')}`，"
+            f"`verifier_started={runtime.get('verifier_started')}`）  \n"
+            f"> ⏱️ **阶段跃迁轨迹**：发生阶段 `{f_stage}` ➔ 检出阶段 `{d_stage}` "
+            f"（`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`）  \n"
+            f"> 🎯 **具体失败原因**：{direct_cause}  \n"
+            f"> 🔍 **深层内部根因**：{internal_cause}  \n"
+            f"> 📊 **证据置信度**：**{conf_val:.2f}** [`{conf_kind}`, 强度=`{ev_strength}`]\n"
         )
 
-    # 2. 故障现场与因果证据链 (Merges Direct Manifestation + Deviation/Timeline + Contract Matrix/Evidence Refs)
+    # 2. 故障现场与因果证据链
     sec2_title = (
         "## 2. 故障现场与因果证据链 (Failure Manifestation & Evidence Chain)\n"
         if include_en_labels
         else "## 2. 故障现场与因果证据链\n"
     )
     lines.append(sec2_title)
-    lines.append(
-        f"- **直接失败现象 (`{manifestation.get('type', 'unknown')}`)**: {manifestation.get('summary', 'N/A')}"
-    )
+
+    fail_snippets = []
     for vobs in evidence.get("verifier_observations") or []:
         if vobs.get("type") == "verifier_fail_message" and (vobs.get("matched_text") or "").strip():
-            lines.append("```text")
-            lines.append(vobs.get("matched_text", "").strip())
-            lines.append("```")
+            fail_snippets.append(vobs.get("matched_text", "").strip())
+    if fail_snippets:
+        lines.append("- **关键失败报错摘要**:")
+        lines.append("```text")
+        for snip in fail_snippets[:3]:
+            lines.append(snip)
+        lines.append("```")
 
     fud_ref: Optional[str] = None
     if fud:
@@ -180,39 +387,13 @@ def _render_chinese_bilingual_core(
         )
 
     ev_refs = analysis.get("evidence_refs") or ["art:trial_result"]
-    lines.append("- **核心证据引用 (`evidence_refs`)**: " + ", ".join(f"`{r}`" for r in ev_refs) + "\n")
+    lines.append(
+        "- **核心证据引用代号 (`evidence_refs`)**: " + ", ".join(f"`{r}`" for r in ev_refs)
+    )
 
-    timeline = evidence.get("timeline") or []
-    if timeline:
-        displayed_events = select_timeline_events(timeline, fud_ref, limit=25)
-        lines.append("| Event ID | Timestamp | Actor | Type | Tool / Summary | Source Pointer |")
-        lines.append("|---|---|---|---|---|---|")
-        for ev in displayed_events:
-            cmd_summary = escape_md_cell((ev.get("command") or ev.get("observation") or "")[:80])
-            lines.append(
-                f"| `{escape_md_cell(ev.get('event_id'))}` | `{escape_md_cell(ev.get('timestamp') or '-')}` | "
-                f"`{escape_md_cell(ev.get('actor'))}` | `{escape_md_cell(ev.get('event_type'))}` | "
-                f"{cmd_summary} | `{escape_md_cell(ev.get('source_file'))}:{escape_md_cell(ev.get('source_pointer'))}` |"
-            )
-        if len(timeline) > len(displayed_events):
-            lines.append(
-                f"\n*（共 {len(timeline)} 个时间线事件，已保留关键偏离点与首尾上下文，完整事件见 `evidence.json`）*"
-            )
-        lines.append("")
+    lines.extend(_render_evidence_file_pointers(evidence, lang="zh", output_format=output_format))
 
-    contracts = evidence.get("contract_observations") or []
-    if contracts:
-        lines.append("| 契约项 (Contract Item) | Prompt 要求 | Verifier 要求 | Agent 状态 | 一致性 (`alignment`) | 说明 |")
-        lines.append("|---|---|---|---|---|---|")
-        for c in contracts:
-            lines.append(
-                f"| `{escape_md_cell(c.get('item'))}` | `{escape_md_cell(c.get('prompt_requirement'))}` | "
-                f"`{escape_md_cell(c.get('verifier_requirement'))}` | `{escape_md_cell(c.get('agent_output_status'))}` | "
-                f"**`{escape_md_cell(c.get('alignment'))}`** | {escape_md_cell(c.get('details', ''))} |"
-            )
-        lines.append("")
-
-    # 3. 竞争假设裁决与伴随信号 (Merges Competing/Excluded Hypotheses + Contributing Factors/Behavioral Signals)
+    # 3. 竞争假设裁决与伴随信号
     sec3_title = (
         "## 3. 竞争假设裁决与伴随信号 (Hypothesis Audit & Signals)\n"
         if include_en_labels
@@ -242,14 +423,13 @@ def _render_chinese_bilingual_core(
         )
 
     sigs = evidence.get("behavioral_signals") or []
-    for sig in sigs:
+    if sigs:
         lines.append(
-            f"- **行为信号 `{sig.get('signal_id')}` (`{sig.get('signal_type')}`)**: "
-            f"{sig.get('description')} [`{sig.get('event_ref')}`]"
+            f"- **行为信号记录**: 共检测到 {len(sigs)} 项潜在行为信号（详细事件与代码行号见 `evidence.json` 的 `behavioral_signals`）"
         )
     lines.append("")
 
-    # 4. 修复行动与处方建议 (Merges Recommended Actions + Optional Skill Prescription + Optional Missing Artifacts)
+    # 4. 修复行动与处方建议
     sec4_title = (
         "## 4. 修复行动与处方建议 (Recommended Actions & Notes)\n"
         if include_en_labels
@@ -273,7 +453,9 @@ def _render_chinese_bilingual_core(
 
     missing = evidence.get("missing_artifacts") or []
     if missing:
-        lines.append("- **缺失产物 (`missing_artifacts`)**: " + ", ".join(f"`{m}`" for m in missing))
+        lines.append(
+            "- **缺失产物 (`missing_artifacts`)**: " + ", ".join(f"`{m}`" for m in missing)
+        )
     lines.append("")
 
     return "\n".join(lines)
@@ -283,6 +465,7 @@ def _render_english_edition(
     evidence: Dict[str, Any],
     analysis: Dict[str, Any],
     standalone: bool = False,
+    output_format: str = "both",
 ) -> str:
     case_id = analysis.get("case_id", evidence.get("case_id", "unknown"))
     trial_name = analysis.get("trial_name", evidence.get("trial_name", case_id))
@@ -309,29 +492,39 @@ def _render_english_edition(
     else:
         lines.append("# Part II: English Edition\n")
 
+    cat = prc.get("category", "unknown")
+    subtype = prc.get("subtype", "unknown")
+    code = prc.get("code", "UNKNOWN")
+    cat_en = CATEGORY_LABELS_EN.get(cat, cat)
+
     # 1. Verdict & Root Cause Summary
     lines.append(_sec_header(1, "Verdict & Root Cause Summary"))
+    direct_cause = manifestation.get("summary") or "N/A"
+    internal_cause = prc.get("summary") or manifestation.get("summary") or "N/A"
     lines.append(
-        f"- **Verdict & Gate**: `{verdict}` (Execution: `{exec_status}`, "
+        f"> 📌 **Root Cause Hierarchy**: [Major Category] {cat_en} (`{cat}`) ➔ [Subcategory] `{subtype}` (`{code}`)  \n"
+        f"> ⚖️ **Verdict & Gate**: `{verdict}` (Execution: `{exec_status}`, "
         f"Verification: `{runtime.get('verification_status', 'unknown')}`, Reward: `{runtime.get('reward')}`, "
-        f"`agent_started={runtime.get('agent_started')}`, `verifier_started={runtime.get('verifier_started')}`)\n"
-        f"- **Primary Root Cause**: `{prc.get('category')}` / `{prc.get('subtype')}` "
-        f"(`{prc.get('code')}`, Confidence: **{conf_val:.2f}** [`{conf_kind}`, strength=`{ev_strength}`])\n"
-        f"- **Stage Transition**: `{f_stage}` → detected at `{d_stage}` "
-        f"(`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`)\n"
-        f"- **Causal Mechanism**: {prc.get('summary') or manifestation.get('summary') or 'N/A'}\n"
+        f"Gate: `agent_started={runtime.get('agent_started')}`, `verifier_started={runtime.get('verifier_started')}`)  \n"
+        f"> ⏱️ **Stage Transition**: `{f_stage}` → detected at `{d_stage}` "
+        f"(`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`)  \n"
+        f"> 🎯 **Direct Failure Cause**: {direct_cause}  \n"
+        f"> 🔍 **Internal Root Cause**: {internal_cause}  \n"
+        f"> 📊 **Evidence Confidence**: **{conf_val:.2f}** [`{conf_kind}`, strength=`{ev_strength}`]\n"
     )
 
     # 2. Failure Manifestation & Evidence Chain
     lines.append(_sec_header(2, "Failure Manifestation & Evidence Chain"))
-    lines.append(
-        f"- **Direct Failure Manifestation (`{manifestation.get('type', 'unknown')}`)**: {manifestation.get('summary', 'N/A')}"
-    )
+    fail_snippets = []
     for vobs in evidence.get("verifier_observations") or []:
         if vobs.get("type") == "verifier_fail_message" and (vobs.get("matched_text") or "").strip():
-            lines.append("```text")
-            lines.append(vobs.get("matched_text", "").strip())
-            lines.append("```")
+            fail_snippets.append(vobs.get("matched_text", "").strip())
+    if fail_snippets:
+        lines.append("- **Key Failure Message Summary**:")
+        lines.append("```text")
+        for snip in fail_snippets[:3]:
+            lines.append(snip)
+        lines.append("```")
 
     fud_ref: Optional[str] = None
     if fud:
@@ -344,37 +537,11 @@ def _render_english_edition(
         )
 
     ev_refs = analysis.get("evidence_refs") or ["art:trial_result"]
-    lines.append("- **Evidence References (`evidence_refs`)**: " + ", ".join(f"`{r}`" for r in ev_refs) + "\n")
+    lines.append(
+        "- **Evidence References (`evidence_refs`)**: " + ", ".join(f"`{r}`" for r in ev_refs)
+    )
 
-    timeline = evidence.get("timeline") or []
-    if timeline:
-        displayed_events = select_timeline_events(timeline, fud_ref, limit=25)
-        lines.append("| Event ID | Timestamp | Actor | Type | Tool / Summary | Source Pointer |")
-        lines.append("|---|---|---|---|---|---|")
-        for ev in displayed_events:
-            cmd_summary = escape_md_cell((ev.get("command") or ev.get("observation") or "")[:80])
-            lines.append(
-                f"| `{escape_md_cell(ev.get('event_id'))}` | `{escape_md_cell(ev.get('timestamp') or '-')}` | "
-                f"`{escape_md_cell(ev.get('actor'))}` | `{escape_md_cell(ev.get('event_type'))}` | "
-                f"{cmd_summary} | `{escape_md_cell(ev.get('source_file'))}:{escape_md_cell(ev.get('source_pointer'))}` |"
-            )
-        if len(timeline) > len(displayed_events):
-            lines.append(
-                f"\n*(Total {len(timeline)} timeline events; key deviation and boundary events retained, see `evidence.json` for full list)*"
-            )
-        lines.append("")
-
-    contracts = evidence.get("contract_observations") or []
-    if contracts:
-        lines.append("| Contract Item | Prompt Req | Verifier Req | Agent Output Status | Alignment | Details |")
-        lines.append("|---|---|---|---|---|---|")
-        for c in contracts:
-            lines.append(
-                f"| `{escape_md_cell(c.get('item'))}` | `{escape_md_cell(c.get('prompt_requirement'))}` | "
-                f"`{escape_md_cell(c.get('verifier_requirement'))}` | `{escape_md_cell(c.get('agent_output_status'))}` | "
-                f"**`{escape_md_cell(c.get('alignment'))}`** | {escape_md_cell(c.get('details', ''))} |"
-            )
-        lines.append("")
+    lines.extend(_render_evidence_file_pointers(evidence, lang="en", output_format=output_format))
 
     # 3. Hypothesis Audit & Signals
     lines.append(_sec_header(3, "Hypothesis Audit & Signals"))
@@ -387,7 +554,9 @@ def _render_english_edition(
         )
     ex_hyps = analysis.get("excluded_hypotheses") or []
     for eh in ex_hyps:
-        lines.append(f"- **Excluded `{eh.get('hypothesis_id')}` (`{eh.get('category')}`)**: {eh.get('reason')}")
+        lines.append(
+            f"- **Excluded `{eh.get('hypothesis_id')}` (`{eh.get('category')}`)**: {eh.get('reason')}"
+        )
     if not comp_hyps and not ex_hyps:
         lines.append("- Case passed; no competing failure hypotheses.")
 
@@ -396,10 +565,10 @@ def _render_english_edition(
             f"- **Contributing Factor (`{cf.get('category')}` / `{cf.get('code')}`, "
             f"Confidence: `{float(cf.get('confidence', 0.0)):.2f}`)**: {cf.get('summary')}"
         )
-    for sig in evidence.get("behavioral_signals") or []:
+    sigs = evidence.get("behavioral_signals") or []
+    if sigs:
         lines.append(
-            f"- **Behavioral Signal `{sig.get('signal_id')}` (`{sig.get('signal_type')}`)**: "
-            f"{sig.get('description')} [`{sig.get('event_ref')}`]"
+            f"- **Behavioral Signals Logged**: Total {len(sigs)} behavioral signals recorded (see `evidence.json` under `behavioral_signals` for step-by-step details)."
         )
     lines.append("")
 
@@ -422,7 +591,9 @@ def _render_english_edition(
 
     missing = evidence.get("missing_artifacts") or []
     if missing:
-        lines.append("- **Missing Artifacts (`missing_artifacts`)**: " + ", ".join(f"`{m}`" for m in missing))
+        lines.append(
+            "- **Missing Artifacts (`missing_artifacts`)**: " + ", ".join(f"`{m}`" for m in missing)
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -462,7 +633,8 @@ def render_skill_prescription_markdown(
             f"- **建议技能名称**: `{name}`",
             "- **触发条件 (`trigger`)**: " + "；".join(rec.get("trigger") or []),
             "- **能力缺口 (`capability_gap`)**: " + "；".join(rec.get("capability_gap") or []),
-            "- **核心执行指引 (`required_guidance`)**: " + "；".join(rec.get("required_guidance") or []),
+            "- **核心执行指引 (`required_guidance`)**: "
+            + "；".join(rec.get("required_guidance") or []),
             "- **禁止的反模式 (`anti_patterns`)**: " + "；".join(rec.get("anti_patterns") or []),
             "",
         ]
@@ -472,9 +644,12 @@ def render_skill_prescription_markdown(
         [
             f"- **Recommended Skill Name**: `{name}`",
             "- **Trigger Conditions (`trigger`)**: " + "; ".join(rec.get("trigger") or []),
-            "- **Capability Gap (`capability_gap`)**: " + "; ".join(rec.get("capability_gap") or []),
-            "- **Required Guidance (`required_guidance`)**: " + "; ".join(rec.get("required_guidance") or []),
-            "- **Anti-Patterns to Avoid (`anti_patterns`)**: " + "; ".join(rec.get("anti_patterns") or []),
+            "- **Capability Gap (`capability_gap`)**: "
+            + "; ".join(rec.get("capability_gap") or []),
+            "- **Required Guidance (`required_guidance`)**: "
+            + "; ".join(rec.get("required_guidance") or []),
+            "- **Anti-Patterns to Avoid (`anti_patterns`)**: "
+            + "; ".join(rec.get("anti_patterns") or []),
             "",
         ]
     )
@@ -496,7 +671,9 @@ def main() -> None:
     import sys
     from validate_analysis import validate_all
 
-    parser = argparse.ArgumentParser(description="Render bilingual report.md and optional skill-prescription.md.")
+    parser = argparse.ArgumentParser(
+        description="Render bilingual report.md and optional skill-prescription.md."
+    )
     parser.add_argument("--evidence", required=True, type=Path, help="Path to evidence.json")
     parser.add_argument("--analysis", required=True, type=Path, help="Path to analysis.json")
     parser.add_argument("--output-report", required=True, type=Path, help="Path to write report.md")

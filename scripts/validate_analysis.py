@@ -13,6 +13,7 @@ the `failure-analysis-v1` schema and enforces hard causal attribution rules:
   5. Non-agent root causes cannot generate a `skill_prescription`.
   6. `report.md` must include all 4 mandatory `## <N>. <Title>` sections with non-empty body text.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -58,7 +59,7 @@ REQUIRED_ANALYSIS_KEYS = {
     "skill_prescription",
 }
 
-VALID_CATEGORIES = {"infra", "case", "agent", "verifier", "numerical", "unknown", "none"}
+VALID_CATEGORIES = {"infra", "case", "agent", "verifier", "unknown", "none"}
 VALID_VERDICTS = {"passed", "failed", "errored", "unknown"}
 
 REQUIRED_REPORT_SECTIONS = [
@@ -105,15 +106,18 @@ def collect_positive_agent_evidence_ids(evidence: Dict[str, Any]) -> Set[str]:
     for sig in evidence.get("behavioral_signals") or []:
         if sig.get("signal_id"):
             pos_ids.add(sig["signal_id"])
+        if sig.get("event_ref"):
+            pos_ids.add(sig["event_ref"])
     for c in evidence.get("contract_observations") or []:
         if c.get("alignment") == "agent_mismatch" and c.get("contract_id"):
             pos_ids.add(c["contract_id"])
-    for ev in evidence.get("timeline") or []:
-        if ev.get("actor") == "agent" and ev.get("event_id"):
-            pos_ids.add(ev["event_id"])
     for s in evidence.get("scientific_observations") or []:
-        if s.get("sci_id"):
-            pos_ids.add(s["sci_id"])
+        # Scientific observation is only positive agent evidence if unrecovered in agent trajectory
+        if not s.get("recovered", False) and str(s.get("source_ref", "")).startswith("trajectory:"):
+            if s.get("sci_id"):
+                pos_ids.add(s["sci_id"])
+            if s.get("source_ref"):
+                pos_ids.add(str(s["source_ref"]))
     return pos_ids
 
 
@@ -136,9 +140,7 @@ def validate_report_sections(report_text: str) -> List[str]:
         next_h2 = re.search(r"(?m)^##\s+", after_header)
         body = after_header[: next_h2.start()] if next_h2 else after_header
         if not body.strip():
-            errors.append(
-                f"report.md section '## {num}. {zh_title}' has empty body content."
-            )
+            errors.append(f"report.md section '## {num}. {zh_title}' has empty body content.")
     return errors
 
 
@@ -208,11 +210,15 @@ def validate_all(
                 "Failed/errored analysis must provide a structured `first_unrecovered_deviation` object."
             )
         else:
-            fud_status = fud.get("status", "identified" if fud.get("event_ref") else "not_identified")
+            fud_status = fud.get(
+                "status", "identified" if fud.get("event_ref") else "not_identified"
+            )
             fud_ref = fud.get("event_ref")
             if fud_status == "identified":
                 if not fud_ref:
-                    errors.append("`first_unrecovered_deviation` with status='identified' must specify `event_ref`.")
+                    errors.append(
+                        "`first_unrecovered_deviation` with status='identified' must specify `event_ref`."
+                    )
                 elif fud_ref not in valid_ids:
                     errors.append(
                         f"Unresolved first_unrecovered_deviation.event_ref {fud_ref!r} not found in evidence.json"
@@ -277,7 +283,9 @@ def validate_all(
         else:
             evaluated = decision_trace.get("evaluated")
             if not isinstance(evaluated, list):
-                errors.append("decision_trace.evaluated must be a list when decision_trace is present.")
+                errors.append(
+                    "decision_trace.evaluated must be a list when decision_trace is present."
+                )
             else:
                 for idx, entry in enumerate(evaluated):
                     if not isinstance(entry, dict) or not entry.get("gate_id"):
@@ -294,10 +302,14 @@ def validate_all(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate evidence.json, analysis.json, and report.md.")
+    parser = argparse.ArgumentParser(
+        description="Validate evidence.json, analysis.json, and report.md."
+    )
     parser.add_argument("--evidence", required=True, type=Path, help="Path to evidence.json")
     parser.add_argument("--analysis", required=True, type=Path, help="Path to analysis.json")
-    parser.add_argument("--report", required=False, type=Path, default=None, help="Optional path to report.md")
+    parser.add_argument(
+        "--report", required=False, type=Path, default=None, help="Optional path to report.md"
+    )
     args = parser.parse_args()
 
     if not args.evidence.is_file():

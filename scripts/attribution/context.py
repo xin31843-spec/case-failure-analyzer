@@ -25,6 +25,7 @@ observation is built with a literal `signal_type` / `obs_id` in
 `normalize_trajectory.py` and `audit_contract.py`) this is unobservable, and
 `tests/test_attribution_decisions.py` pins the malformed case.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -80,6 +81,7 @@ class AttributionContext:
     dep_search_sigs: List[Dict[str, Any]] = field(default_factory=list)
     premature_sigs: List[Dict[str, Any]] = field(default_factory=list)
     agent_mismatch_contracts: List[Dict[str, Any]] = field(default_factory=list)
+    unverified_output_sigs: List[Dict[str, Any]] = field(default_factory=list)
     agent_timeline_events: List[Dict[str, Any]] = field(default_factory=list)
 
 
@@ -96,9 +98,7 @@ def build_context(
     signals = evidence.get("behavioral_signals") or []
     timeline = evidence.get("timeline") or []
 
-    fail_log_obs = next(
-        (v for v in verifier_obs if v.get("obs_id") == "ver:fail_log"), None
-    )
+    fail_log_obs = next((v for v in verifier_obs if v.get("obs_id") == "ver:fail_log"), None)
 
     return AttributionContext(
         evidence=evidence,
@@ -126,17 +126,12 @@ def build_context(
         ],
         unrecovered_sci_obs=[s for s in sci_obs if not s.get("recovered", False)],
         recovered_sci_obs=[s for s in sci_obs if s.get("recovered", False)],
-        repeated_fail_sigs=[
-            s for s in signals if s.get("signal_type") == "repeated_failed_action"
-        ],
+        repeated_fail_sigs=[s for s in signals if s.get("signal_type") == "repeated_failed_action"],
         dep_search_sigs=[
             s for s in signals if s.get("signal_type") == "dependency_search_attempted"
         ],
-        premature_sigs=[
-            s for s in signals if s.get("signal_type") == "premature_completion"
-        ],
-        agent_mismatch_contracts=[
-            c for c in contracts if c.get("alignment") == "agent_mismatch"
-        ],
+        premature_sigs=[s for s in signals if s.get("signal_type") == "premature_completion"],
+        agent_mismatch_contracts=[c for c in contracts if c.get("alignment") == "agent_mismatch"],
+        unverified_output_sigs=[s for s in signals if s.get("signal_type") == "unverified_output"],
         agent_timeline_events=[ev for ev in timeline if ev.get("actor") == "agent"],
     )

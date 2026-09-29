@@ -25,7 +25,6 @@
 | `case` | 修正 Prompt 说明、补充资产文件或调整 `task.toml` 规范 | **否** |
 | `infra` | 修复 Runner 调度器、Docker 镜像源、网络、超时配置或容器环境 | **否** |
 | `verifier` | 修复 `tests/verify.py` 解析器/正则表达式/容差阈值并补充回归测试 | **否** |
-| `numerical` | 固定随机数种子（RNG Seed）、固定线程/进程数或改为系综统计容差 | **否** |
 | `unknown` | 输出补充取证核查清单 | **否** |
 | `agent`（具备可复用科学/工程能力缺口） | 生成领域 Skill 处方 + Agent 策略改进建议 | **是** |
 

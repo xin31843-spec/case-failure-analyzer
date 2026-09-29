@@ -1,39 +1,48 @@
 ---
 name: case-failure-analyzer
-description: Analyze failed scientific-computing benchmark cases from job artifacts, agent trajectories, task definitions, and verifier code; attribute failures to case specification, infrastructure, agent behavior, scientific decisions, verifier defects, or numerical nondeterminism. Output bilingual (Chinese & English) causal audit reports.
+description: Analyze failed scientific-computing benchmark cases from job artifacts, agent trajectories, task definitions, and verifier code; attribute failures across four peer-level categories (Agent decisions, Verifier rules, Case design, or Infrastructure environment). Output concise bilingual (Chinese & English) causal audit reports with evidence file pointers.
 metadata:
-  short-description: Audit scientific benchmark case failures and root causes
+  short-description: Audit scientific benchmark case failures across 4 peer categories with concise reports
 ---
 
 # Case Failure Analyzer
 
 Use this skill when asked to diagnose why a scientific-computing benchmark case (`jobs/<job_name>` + `tasks/<task_name>`) failed.
 
-It performs an end-to-end, evidence-backed causal audit rather than naive log keyword matching:
-**Artifact Collection → Unified Runtime State → Timeline Reconstruction → Contract Audit → Scientific Error Diagnosis → Candidate Hypothesis Competition → Causal Attribution → Bilingual Report & Skill Prescription**
+It performs an end-to-end, evidence-backed causal audit across **Four Peer-Level Root Cause Categories**:
+1. **智能体决策与执行失误 (`agent`)**: 细化归因智能体在科学方法选型、科学参数与截断设定、任务契约理解、工作流编排、工具调用/代码编写、结果后处理校验中的具体决策偏差。
+2. **评测验证与规则判定缺陷 (`verifier`)**: 包含容差过紧碰撞、强类型比较不兼容、正则与文本解析缺陷、隐藏私有契约、重算崩溃等评测规则与判分实现缺陷。
+3. **基准题目与规格设计缺陷 (`case`)**: 包含题干隐式参数未固化、题干约定缺失或语义歧义、初始资产缺失或损坏、参考真值矛盾、超时算力配额不合理。
+4. **运行环境与系统设施缺陷 (`infra`)**: 包含底层容器构建/运行时崩溃、基础依赖缺失、网络连接超时、外部 API 配额耗尽等基础设施故障。
+
+### Concise Report Standard (精简报告规范)
+- **直击痛点**: 报告第 1 节直接点明直接失败原因（表象），并深入剖析更具体的内部深层根因。
+- **证据解耦**: 报告第 2 节精简保留关键判分报错与首次偏离点，以清晰的 **证据链来源文件索引 (Evidence File Pointers)** 指引在 `agent/trajectory.json`、`verifier/verify.log`、`evidence.json` 等文件中查看细节，彻底杜绝平铺冗长的大型时间线与契约表格。
 
 ### Inputs
 
 Require or discover:
-- `--job`: Job directory (`jobs/<job_name>` or `jobs_failed_backup/<job_name>`) or specific trial directory
-- `--task`: Corresponding task definition directory (`tasks/<task_name>`)
+- `--job`: Job directory (`jobs/<job_name>` or `jobs_failed_backup/<job_name>`) or specific trial directory (Required)
+- `--output`: Output directory for evidence, analysis, and reports (Required)
+- `--task`: Corresponding task definition directory (`tasks/<task_name>`) (Optional; auto-discovered or omitted when analyzing standalone job logs)
 
 ### Default Behavior & Boundaries
 
-- **Read-only by default**: Never modifies `tasks/`, `jobs/`, or `tests/verify.py`.
+- **Static Post-hoc Audit**: Designed for completed jobs and trials; not an active runner daemon or real-time event watcher.
+- **Read-only by default on inputs**: Never modifies `tasks/`, `jobs/`, or `tests/verify.py`.
 - **Deterministic Evidence Extraction + Model Causal Reasoning**: Deterministic scripts extract `evidence.json` and `candidate-hypotheses.json`; the Agent evaluates competing hypotheses per `references/attribution-protocol.md` (or validates the conservative draft in `analysis.json`).
 - **Evidence-first attribution**: Never assigns a root cause from a single keyword match. Separates **failure manifestation (symptom)**, **detection stage**, and **primary root cause**.
-- **Positive-evidence gate for Agent blame**: Never defaults to `agent` when other gates do not fire. Requires positive agent evidence (`behavioral_signals`, `agent_mismatch` contract, or agent-caused `scientific_observations`).
+- **Positive-evidence gate for Agent blame**: Never defaults to `agent` when other gates do not fire. Requires positive agent causal evidence (`behavioral_signals`, `agent_mismatch` contract, or unrecovered trajectory scientific errors tied to agent decisions). Ordinary trajectory events or unexplained verifier mismatches converge to `unknown`.
 - **Calibrated uncertainty**: Outputs `unknown` (`UNKNOWN_INSUFFICIENT_EVIDENCE`) when evidence cannot distinguish competing hypotheses.
-- **Bilingual Report Output**: Always produces a Chinese-English bilingual `report.md` (along with standalone `report.zh.md` and `report.en.md`, plus bilingual `skill-prescription.md` when eligible).
+- **Concise Bilingual Report Output**: Always produces concise Chinese-English bilingual `report.md` (along with standalone `report.zh.md` and `report.en.md`, plus bilingual `skill-prescription.md` when eligible).
 
 ### Runtime Contract
 
-- `scripts/analyze_case.py` is the single entrypoint; it is **read-only** unless `--output` is supplied.
+- `scripts/analyze_case.py` is the single CLI entrypoint; `--job` and `--output` are required, `--task` is optional.
 - Supported trajectory schemas: `ATIF-v1.7` (primary), plus `ATIF-v1.6` / `ATIF-v1.5`.
 - Output schema version: `failure-analysis-v1` (see `references/evidence-schema.md` and `references/report-schema.md`).
 - Bilingual output is mandatory for `--phase all`: `report.md`, `report.zh.md`, `report.en.md`, and `skill-prescription.md` only when eligible.
-- Invalid inputs (missing `--job`/`--task`, unknown `--trial`, empty job tree without job-level evidence) exit with code `2` and write nothing.
+- Invalid inputs (missing `--job` or `--output`, non-existent `--job`/`--task`, unknown `--trial`, empty job tree without job-level evidence) exit with code `2` and write nothing.
 - `analysis.json` carries an optional `decision_trace` recording which gate was evaluated, why each abstained, and which one was selected. It is additive and never required: a hand-authored or model-written `analysis.json` validates without one.
 - `evidence.json` carries an optional `diagnostics` list recording any recovery that degraded evidence (an unparseable `tests/verify.py` or `verifier/reward.txt`). A non-empty list means some conclusion rests on less than the artifacts appear to show; the same records are printed to stderr.
 

@@ -7,6 +7,7 @@ from objective `evidence.json` observations, attaching supporting evidence,
 contradicting evidence, missing discriminating evidence, counterfactual tests,
 and heuristic evidence scores (`scripts/confidence.py`).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,7 +39,9 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
     candidates: List[Dict[str, Any]] = []
     h_idx = 1
 
-    artifact_ids = {a.get("artifact_id") for a in (evidence.get("artifacts") or []) if a.get("artifact_id")}
+    artifact_ids = {
+        a.get("artifact_id") for a in (evidence.get("artifacts") or []) if a.get("artifact_id")
+    }
 
     # 1. Pre-startup / Infrastructure hypotheses
     causal_infra = [e for e in errors if e.get("causal_candidate")]
@@ -99,16 +102,16 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
     # 3. Verifier defect / crash hypotheses
     verifier_crashes = [v for v in verifier_obs if v.get("type") == "verifier_internal_crash"]
     verifier_defects = [
-        c for c in contracts
-        if c.get("alignment") in ("verifier_defect", "verifier_hidden_requirement", "verifier_schema_mismatch")
+        c
+        for c in contracts
+        if c.get("alignment")
+        in ("verifier_defect", "verifier_hidden_requirement", "verifier_schema_mismatch")
     ]
     triggered_hazards = [
-        v for v in verifier_obs
-        if v.get("triggered") and v.get("type") != "verifier_internal_crash"
+        v for v in verifier_obs if v.get("triggered") and v.get("type") != "verifier_internal_crash"
     ]
     static_hazards = [
-        v for v in verifier_obs
-        if v.get("hazard_detected") and not v.get("triggered")
+        v for v in verifier_obs if v.get("hazard_detected") and not v.get("triggered")
     ]
 
     if verifier_crashes:
@@ -132,7 +135,9 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         vd = verifier_defects[0] if verifier_defects else None
         th = triggered_hazards[0] if triggered_hazards else None
         is_schema_mismatch = bool(vd and vd.get("alignment") == "verifier_schema_mismatch")
-        is_regex = bool((th and th.get("type") == "parser_hazard") or (vd and "namelist" in vd.get("item", "")))
+        is_regex = bool(
+            (th and th.get("type") == "parser_hazard") or (vd and "namelist" in vd.get("item", ""))
+        )
         if is_schema_mismatch:
             v_subtype = "schema_mismatch"
             v_code = "VERIFIER_SCHEMA_MISMATCH"
@@ -160,7 +165,9 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
             "missing_evidence": [],
             "counterfactual_test": "Patch `tests/verify.py` parser/header/schema handling and re-verify existing workspace outputs.",
         }
-        attach_confidence_metadata(h, direct_causal_evidence=len(ev_for), cross_source_corroboration=1)
+        attach_confidence_metadata(
+            h, direct_causal_evidence=len(ev_for), cross_source_corroboration=1
+        )
         candidates.append(h)
         h_idx += 1
     elif static_hazards:
@@ -186,22 +193,32 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         candidates.append(h)
         h_idx += 1
 
-    # 4. Numerical trajectory divergence hypothesis (requiring quantitative metric mentions)
+    # 4. Verifier strict tolerance on chaotic/numerical trajectory divergence
     has_structured_numerical = bool(
-        re.search(r"(?:trajectory_rmsd\s*=\s*[\d.]+|instantaneous_position.*?>\s*[\d.]+)", fail_text, re.IGNORECASE)
-        and re.search(r"(?:ensemble average matches|ensemble.*within tolerance|conserved.*matches)", fail_text, re.IGNORECASE)
+        re.search(
+            r"(?:trajectory_rmsd\s*=\s*[\d.]+|instantaneous_position.*?>\s*[\d.]+)",
+            fail_text,
+            re.IGNORECASE,
+        )
+        and re.search(
+            r"(?:ensemble average matches|ensemble.*within tolerance|conserved.*matches)",
+            fail_text,
+            re.IGNORECASE,
+        )
     )
     has_partial_numerical_metric = bool(
-        re.search(r"(?:trajectory_rmsd|instantaneous_position|ensemble average)", fail_text, re.IGNORECASE)
+        re.search(
+            r"(?:trajectory_rmsd|instantaneous_position|ensemble average)", fail_text, re.IGNORECASE
+        )
     )
     if has_structured_numerical:
         ev_for = ["ver:fail_log"] if fail_log_obs else []
         h = {
             "hypothesis_id": f"H{h_idx}",
-            "category": "numerical",
-            "subtype": "trajectory_divergence",
-            "code": "NUMERICAL_TRAJECTORY_DIVERGENCE",
-            "claim": "Lyapunov-sensitive MD trajectory divergence across float/parallel accumulation while ensemble averages match.",
+            "category": "verifier",
+            "subtype": "tolerance_too_strict",
+            "code": "VERIFIER_TOLERANCE_TOO_STRICT",
+            "claim": "Verifier evaluated instantaneous trajectory/position divergence rather than ensemble averages, causing failure despite valid ensemble statistics.",
             "evidence_for": ev_for,
             "evidence_against": [],
             "missing_evidence": [],
@@ -214,13 +231,16 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         ev_for = ["ver:fail_log"] if fail_log_obs else []
         h = {
             "hypothesis_id": f"H{h_idx}",
-            "category": "numerical",
-            "subtype": "trajectory_divergence",
-            "code": "NUMERICAL_TRAJECTORY_DIVERGENCE",
-            "claim": "Partial trajectory or ensemble metric mentioned in verifier log without complete trajectory-vs-ensemble comparison.",
+            "category": "verifier",
+            "subtype": "tolerance_too_strict",
+            "code": "VERIFIER_TOLERANCE_TOO_STRICT",
+            "claim": "Partial trajectory or ensemble metric mentioned in verifier log without complete trajectory-vs-ensemble comparison; verifier tolerance may be too strict.",
             "evidence_for": ev_for,
             "evidence_against": [],
-            "missing_evidence": ["Quantitative trajectory RMSD vs ensemble average data", "RNG seed / thread comparison"],
+            "missing_evidence": [
+                "Quantitative trajectory RMSD vs ensemble average data",
+                "RNG seed / thread comparison",
+            ],
             "counterfactual_test": "Compare agent output trajectory statistics against reference ensemble averages.",
         }
         attach_confidence_metadata(
@@ -273,7 +293,13 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
         avail_against = (
             [e["error_id"] for e in causal_infra]
             or (["ver:internal_crash"] if verifier_crashes else [])
-            or ([s.get("recovery_event_ref") for s in recovered_sci_obs if s.get("recovery_event_ref")])
+            or (
+                [
+                    s.get("recovery_event_ref")
+                    for s in recovered_sci_obs
+                    if s.get("recovery_event_ref")
+                ]
+            )
         )
         h = {
             "hypothesis_id": f"H{h_idx}",
@@ -283,7 +309,9 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
             "claim": "Agent produced invalid or missing simulation results.",
             "evidence_for": [],
             "evidence_against": avail_against,
-            "missing_evidence": ["Positive behavioral, scientific, or contract-mismatch evidence implicating agent decisions"],
+            "missing_evidence": [
+                "Positive behavioral, scientific, or contract-mismatch evidence implicating agent decisions"
+            ],
             "counterfactual_test": "Inspect agent trajectory and generated workspace files for explicit errors.",
         }
         attach_confidence_metadata(
@@ -320,9 +348,13 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate candidate root-cause hypotheses from evidence.json.")
+    parser = argparse.ArgumentParser(
+        description="Generate candidate root-cause hypotheses from evidence.json."
+    )
     parser.add_argument("--evidence", required=True, type=Path, help="Path to evidence.json")
-    parser.add_argument("--output", required=True, type=Path, help="Path to candidate-hypotheses.json")
+    parser.add_argument(
+        "--output", required=True, type=Path, help="Path to candidate-hypotheses.json"
+    )
     args = parser.parse_args()
 
     ev = json.loads(args.evidence.read_text(encoding="utf-8"))

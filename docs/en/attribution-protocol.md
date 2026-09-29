@@ -59,6 +59,6 @@ When `verifier/verify.log` outputs an error or `FAIL: <msg>`:
 
 ## 4. Numerical Attribution & Competing Hypothesis Rules
 
-- **Structured Numerical Evidence Required**: Never classify as `numerical` (`NUMERICAL_TRAJECTORY_DIVERGENCE`) from a bare keyword like `chaotic`. Require structured comparison showing pointwise trajectory/position divergence alongside matching ensemble averages or conserved quantities.
+- **Structured Numerical Evidence Required**: When structured pointwise trajectory divergence occurs alongside matching ensemble averages or conserved quantities, classify as `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`), not `agent`. Never classify from a bare keyword like `chaotic` without structured comparison (abstains to `unknown`).
 - **Competing Hypotheses**: Every failed/errored case MUST populate `competing_hypotheses` (`candidate-hypotheses.json`) and `first_unrecovered_deviation`.
 - **Calibrated Confidence**: Confidence scores (`confidence_kind = "heuristic_evidence_score"`, `evidence_strength = "high" | "medium" | "low"`) are computed from evidence counts, multi-source corroboration, and competing hypothesis separation (`scripts/confidence.py`).

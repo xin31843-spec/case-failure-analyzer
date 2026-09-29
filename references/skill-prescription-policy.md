@@ -23,7 +23,6 @@ When any of the 5 eligibility conditions is false, `skill_prescription` MUST be 
 | `case` | Prompt / asset / `task.toml` specification fix | **No** |
 | `infra` | Runner, Docker image mirror, network, timeout, or container fix | **No** |
 | `verifier` | `tests/verify.py` parser/regex/tolerance patch + regression test | **No** |
-| `numerical` | RNG seed pinning, thread pinning, or ensemble statistical tolerance fix | **No** |
 | `unknown` | Evidence collection checklist | **No** |
 | `agent` (reusable scientific/workflow gap) | Domain Skill prescription + Agent policy guidance | **Yes** |
 

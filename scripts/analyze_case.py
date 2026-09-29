@@ -13,6 +13,7 @@ Pipeline:
   8. Schema & Attribution Constraint Validation (`validate_analysis.py`)
   9. Bilingual Report & Skill Prescription Rendering (`render_report.py`)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -124,7 +125,11 @@ def _reconcile_competing_hypotheses(
         if key in seen_keys:
             for existing in merged:
                 if (existing.get("category"), existing.get("subtype")) == key:
-                    merged_for = list(dict.fromkeys((existing.get("evidence_for") or []) + (cand.get("evidence_for") or [])))
+                    merged_for = list(
+                        dict.fromkeys(
+                            (existing.get("evidence_for") or []) + (cand.get("evidence_for") or [])
+                        )
+                    )
                     existing["evidence_for"] = merged_for
                     break
             continue
@@ -172,8 +177,6 @@ def _build_raw_causal_attribution(
     but unused.
     """
     return run_attribution_engine(evidence, cand_hyps)
-
-
 
 
 def analyze_single_trial(
@@ -244,12 +247,17 @@ def write_outputs(
                 json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8"
             )
     if fmt in ("markdown", "both") and report_md is not None and analysis is not None:
-        (out_dir / "report.md").write_text(report_md, encoding="utf-8")
+        (out_dir / "report.md").write_text(
+            render_report_markdown(evidence, analysis, lang="bilingual", output_format=fmt),
+            encoding="utf-8",
+        )
         (out_dir / "report.zh.md").write_text(
-            render_report_markdown(evidence, analysis, lang="zh"), encoding="utf-8"
+            render_report_markdown(evidence, analysis, lang="zh", output_format=fmt),
+            encoding="utf-8",
         )
         (out_dir / "report.en.md").write_text(
-            render_report_markdown(evidence, analysis, lang="en"), encoding="utf-8"
+            render_report_markdown(evidence, analysis, lang="en", output_format=fmt),
+            encoding="utf-8",
         )
         sp = analysis.get("skill_prescription")
         if skill_md and sp:
@@ -304,7 +312,9 @@ def main() -> None:
         description="Analyze scientific-computing benchmark case failures (Case Failure Analyzer)."
     )
     parser.add_argument("--job", required=True, type=Path, help="Job or trial directory path")
-    parser.add_argument("--task", required=False, type=Path, default=None, help="Task definition directory path")
+    parser.add_argument(
+        "--task", required=False, type=Path, default=None, help="Task definition directory path"
+    )
     parser.add_argument("--trial", default="all", help="Specific trial name or 'all'")
     parser.add_argument(
         "--output",
@@ -327,8 +337,14 @@ def main() -> None:
         default="none",
         help="Verifier/simulation replay mode (only 'none' is supported for static read-only analysis)",
     )
-    parser.add_argument("--max-log-bytes", type=int, default=120000, help="Maximum bytes per log file read")
-    parser.add_argument("--include-session-files", action="store_true", help="Include agent session files in inventory")
+    parser.add_argument(
+        "--max-log-bytes", type=int, default=120000, help="Maximum bytes per log file read"
+    )
+    parser.add_argument(
+        "--include-session-files",
+        action="store_true",
+        help="Include agent session files in inventory",
+    )
     parser.add_argument(
         "--format",
         choices=["json", "markdown", "both"],
@@ -363,7 +379,9 @@ def main() -> None:
             sys.exit(2)
     elif not all_trials:
         # A job-level pre-startup failure is legitimate only when job-level evidence exists.
-        has_job_level_evidence = (args.job / "result.json").is_file() or (args.job / "job.log").is_file()
+        has_job_level_evidence = (args.job / "result.json").is_file() or (
+            args.job / "job.log"
+        ).is_file()
         if not has_job_level_evidence:
             print(
                 f"ERROR: no trial directories and no job-level result.json/job.log found under {args.job}. "
@@ -384,7 +402,9 @@ def main() -> None:
     if len(trials) == 1:
         inv = trials[0]
         if args.phase == "collect":
-            ev, _, _, cand_hyps = collect_case_evidence(inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes)
+            ev, _, _, cand_hyps = collect_case_evidence(
+                inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes
+            )
             _report_diagnostics(ev)
             write_outputs(args.output, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format)
         else:
@@ -401,7 +421,9 @@ def main() -> None:
         for inv in trials:
             t_out = args.output / inv["trial_name"]
             if args.phase == "collect":
-                ev, _, _, cand_hyps = collect_case_evidence(inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes)
+                ev, _, _, cand_hyps = collect_case_evidence(
+                    inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes
+                )
                 _report_diagnostics(ev)
                 write_outputs(t_out, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format)
                 summary_rows.append(
