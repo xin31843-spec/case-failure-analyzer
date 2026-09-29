@@ -6,6 +6,7 @@ Discovers job-level, trial-level, and task-level artifacts, computes SHA256
 hashes, parses JSON/TOML metadata, determines whether the agent and verifier
 actually started, and lists missing artifacts without failing on partial runs.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -120,7 +121,13 @@ def is_trial_dir(path: Path) -> bool:
         return False
     # If any immediate subdirectory has its own trial.log or trial_name in result.json, `path` is a job root
     for child in path.iterdir():
-        if child.is_dir() and child.name not in ("agent", "verifier", "artifacts", "environment", "tests"):
+        if child.is_dir() and child.name not in (
+            "agent",
+            "verifier",
+            "artifacts",
+            "environment",
+            "tests",
+        ):
             child_res = safe_load_json(child / "result.json")
             if (child / "trial.log").is_file() or (child_res and "trial_name" in child_res):
                 return False
@@ -232,17 +239,14 @@ def build_trial_inventory(
     # 3. Auto-resolve task_dir from config/result if not supplied
     job_result = safe_load_json(job_dir / "result.json") or {}
     trial_result = (
-        safe_load_json(trial_dir / "result.json")
-        if (trial_dir and trial_dir.is_dir())
-        else None
+        safe_load_json(trial_dir / "result.json") if (trial_dir and trial_dir.is_dir()) else None
     ) or {}
     if task_dir is None:
         raw_task_id = trial_result.get("task_id")
         raw_config = trial_result.get("config")
         raw_config_task = raw_config.get("task") if isinstance(raw_config, dict) else None
-        task_rel = (
-            (raw_task_id.get("path") if isinstance(raw_task_id, dict) else None)
-            or (raw_config_task.get("path") if isinstance(raw_config_task, dict) else None)
+        task_rel = (raw_task_id.get("path") if isinstance(raw_task_id, dict) else None) or (
+            raw_config_task.get("path") if isinstance(raw_config_task, dict) else None
         )
         if task_rel:
             candidate = job_dir.parent.parent / task_rel
@@ -276,9 +280,7 @@ def build_trial_inventory(
             for idx, af in enumerate(sorted(assets_dir.rglob("*"))):
                 if af.is_file() and not af.name.startswith("."):
                     rel = str(af.relative_to(task_dir))
-                    artifacts.append(
-                        make_artifact_entry(f"art:asset_{idx}", task_dir, rel, "task")
-                    )
+                    artifacts.append(make_artifact_entry(f"art:asset_{idx}", task_dir, rel, "task"))
 
     # 5. Determine runtime status and stage gates via shared runtime_state module
     rt_state = compute_runtime_state(
@@ -288,15 +290,8 @@ def build_trial_inventory(
     )
     job_stats = rt_state.pop("job_stats", {})
 
-    case_id = (
-        trial_result.get("task_name")
-        or (task_dir.name if task_dir else None)
-        or job_dir.name
-    )
-    trial_name = (
-        trial_result.get("trial_name")
-        or (trial_dir.name if trial_dir else job_dir.name)
-    )
+    case_id = trial_result.get("task_name") or (task_dir.name if task_dir else None) or job_dir.name
+    trial_name = trial_result.get("trial_name") or (trial_dir.name if trial_dir else job_dir.name)
 
     return {
         "case_id": case_id,
@@ -351,9 +346,13 @@ def discover_all(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Discover job, trial, and task artifacts.")
     parser.add_argument("--job", required=True, type=Path, help="Path to job or trial directory")
-    parser.add_argument("--task", required=False, type=Path, default=None, help="Path to task directory")
+    parser.add_argument(
+        "--task", required=False, type=Path, default=None, help="Path to task directory"
+    )
     parser.add_argument("--trial", default="all", help="Trial name or 'all'")
-    parser.add_argument("--include-session-files", action="store_true", help="Include agent session files")
+    parser.add_argument(
+        "--include-session-files", action="store_true", help="Include agent session files"
+    )
     parser.add_argument("--output", required=True, type=Path, help="Output JSON file path")
     args = parser.parse_args()
 

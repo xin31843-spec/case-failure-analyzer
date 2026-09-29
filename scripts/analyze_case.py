@@ -20,7 +20,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -217,6 +217,19 @@ def _report_diagnostics(evidence: Dict[str, Any]) -> None:
         print(f"ANALYSIS DIAGNOSTIC: {format_diagnostic_line(record)}", file=sys.stderr)
 
 
+KNOWN_TRIAL_ARTIFACTS = {
+    "evidence.json",
+    "candidate-hypotheses.json",
+    "analysis.json",
+    "report.md",
+    "report.zh.md",
+    "report.en.md",
+    "skill-prescription.md",
+    "skill-prescription.zh.md",
+    "skill-prescription.en.md",
+}
+
+
 def write_outputs(
     out_dir: Path,
     evidence: Dict[str, Any],
@@ -227,11 +240,12 @@ def write_outputs(
     fmt: str = "both",
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Determine planned artifacts for the current invocation
+    planned_files: Set[str] = set()
+    effective_cand_hyps = cand_hyps
     if fmt in ("json", "both"):
-        (out_dir / "evidence.json").write_text(
-            json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        effective_cand_hyps = cand_hyps
+        planned_files.add("evidence.json")
         if effective_cand_hyps is None and analysis is not None:
             effective_cand_hyps = {
                 "case_id": evidence.get("case_id"),
@@ -239,14 +253,41 @@ def write_outputs(
                 "candidate_hypotheses": analysis.get("competing_hypotheses") or [],
             }
         if effective_cand_hyps is not None:
-            (out_dir / "candidate-hypotheses.json").write_text(
-                json.dumps(effective_cand_hyps, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            planned_files.add("candidate-hypotheses.json")
         if analysis is not None:
-            (out_dir / "analysis.json").write_text(
-                json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
-    if fmt in ("markdown", "both") and report_md is not None and analysis is not None:
+            planned_files.add("analysis.json")
+
+    has_markdown = fmt in ("markdown", "both") and report_md is not None and analysis is not None
+    if has_markdown:
+        planned_files.add("report.md")
+        planned_files.add("report.zh.md")
+        planned_files.add("report.en.md")
+        sp = analysis.get("skill_prescription")
+        if skill_md and sp:
+            planned_files.add("skill-prescription.md")
+            planned_files.add("skill-prescription.zh.md")
+            planned_files.add("skill-prescription.en.md")
+
+    # 2. Lifecycle cleanup: purge stale known trial artifacts from prior runs
+    for stale_file in KNOWN_TRIAL_ARTIFACTS - planned_files:
+        stale_path = out_dir / stale_file
+        if stale_path.is_file():
+            stale_path.unlink()
+
+    # 3. Write planned artifacts
+    if "evidence.json" in planned_files:
+        (out_dir / "evidence.json").write_text(
+            json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    if "candidate-hypotheses.json" in planned_files and effective_cand_hyps is not None:
+        (out_dir / "candidate-hypotheses.json").write_text(
+            json.dumps(effective_cand_hyps, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    if "analysis.json" in planned_files and analysis is not None:
+        (out_dir / "analysis.json").write_text(
+            json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    if has_markdown and analysis is not None:
         (out_dir / "report.md").write_text(
             render_report_markdown(evidence, analysis, lang="bilingual", output_format=fmt),
             encoding="utf-8",
@@ -353,6 +394,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.phase == "collect" and args.format == "markdown":
+        print(
+            "ERROR: --phase collect does not produce markdown reports. "
+            "Use --format json or --format both.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     # Fail fast on bad input paths or unsupported replay modes before writing any output.
     if args.replay != "none":
         try:
@@ -400,6 +449,9 @@ def main() -> None:
     job_dir = Path(discovery["job_dir"])
 
     if len(trials) == 1:
+        stale_summary = args.output / "job_summary.json"
+        if stale_summary.is_file():
+            stale_summary.unlink()
         inv = trials[0]
         if args.phase == "collect":
             ev, _, _, cand_hyps = collect_case_evidence(

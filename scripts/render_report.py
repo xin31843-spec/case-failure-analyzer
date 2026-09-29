@@ -127,68 +127,90 @@ def _render_evidence_file_pointers(
     artifacts = evidence.get("artifacts") or []
     art_map = {a.get("rel_path"): a for a in artifacts if a.get("rel_path")}
 
+    job_dir = evidence.get("job_dir") or "N/A"
+    trial_dir = evidence.get("trial_dir") or evidence.get("job_dir") or "N/A"
+    task_dir = evidence.get("task_dir") or "N/A"
+
     lines: List[str] = []
     if lang == "zh":
         lines.append("\n### 证据链来源文件索引 (Evidence File Pointers)")
+        lines.append(
+            f"- **根目录上下文 (Root Paths)**: trial_dir=`{trial_dir}`, task_dir=`{task_dir}`, job_dir=`{job_dir}`"
+        )
         # 1. Trajectory
         traj = art_map.get("agent/trajectory.json")
         cc = art_map.get("agent/claude-code.txt")
         traj_items = []
         if traj and traj.get("exists"):
-            traj_items.append("`agent/trajectory.json` (交互轮次及工具调用)")
+            p = traj.get("abs_path") or f"{trial_dir}/agent/trajectory.json"
+            traj_items.append(f"[trial] `agent/trajectory.json` (交互轮次及工具调用, 路径: `{p}`)")
         elif traj:
-            traj_items.append("`agent/trajectory.json` 【缺失 / Missing】")
+            traj_items.append("[trial] `agent/trajectory.json` 【缺失 / Missing】")
         if cc and cc.get("exists"):
-            traj_items.append("`agent/claude-code.txt` (Agent 执行输出)")
+            p = cc.get("abs_path") or f"{trial_dir}/agent/claude-code.txt"
+            traj_items.append(f"[trial] `agent/claude-code.txt` (Agent 执行输出, 路径: `{p}`)")
         elif cc and not traj:
-            traj_items.append("`agent/claude-code.txt` 【缺失 / Missing】")
+            traj_items.append("[trial] `agent/claude-code.txt` 【缺失 / Missing】")
         if traj_items:
             lines.append("- **交互轨迹与代码记录**: " + ", ".join(traj_items))
         else:
-            lines.append("- **交互轨迹与代码记录**: `agent/trajectory.json` 【缺失 / Missing】")
+            lines.append(
+                "- **交互轨迹与代码记录**: [trial] `agent/trajectory.json` 【缺失 / Missing】"
+            )
 
         # 2. Verifier
         vlog = art_map.get("verifier/verify.log")
         vout = art_map.get("verifier/test-stdout.txt")
         v_items = []
         if vlog and vlog.get("exists"):
-            v_items.append("`verifier/verify.log` (评测判定日志)")
+            p = vlog.get("abs_path") or f"{trial_dir}/verifier/verify.log"
+            v_items.append(f"[trial] `verifier/verify.log` (评测判定日志, 路径: `{p}`)")
         elif vlog:
-            v_items.append("`verifier/verify.log` 【缺失 / Missing】")
+            v_items.append("[trial] `verifier/verify.log` 【缺失 / Missing】")
         if vout and vout.get("exists"):
-            v_items.append("`verifier/test-stdout.txt` (测试输出)")
+            p = vout.get("abs_path") or f"{trial_dir}/verifier/test-stdout.txt"
+            v_items.append(f"[trial] `verifier/test-stdout.txt` (测试输出, 路径: `{p}`)")
         elif vout and not vlog:
-            v_items.append("`verifier/test-stdout.txt` 【缺失 / Missing】")
+            v_items.append("[trial] `verifier/test-stdout.txt` 【缺失 / Missing】")
         if v_items:
             lines.append("- **验证器执行与判定日志**: " + ", ".join(v_items))
         else:
-            lines.append("- **验证器执行与判定日志**: `verifier/verify.log` 【缺失 / Missing】")
+            lines.append(
+                "- **验证器执行与判定日志**: [trial] `verifier/verify.log` 【缺失 / Missing】"
+            )
 
         # 3. Task
         inst = art_map.get("instruction.md")
         refs = art_map.get("tests/refs.json") or art_map.get("refs.json")
         t_items = []
         if inst and inst.get("exists"):
-            t_items.append("`instruction.md` (题目要求)")
+            p = inst.get("abs_path") or f"{task_dir}/instruction.md"
+            t_items.append(f"[task] `instruction.md` (题目要求, 路径: `{p}`)")
         elif inst:
-            t_items.append("`instruction.md` 【缺失 / Missing】")
+            t_items.append("[task] `instruction.md` 【缺失 / Missing】")
         if refs and refs.get("exists"):
-            t_items.append("`tests/refs.json` (参考真值)")
+            p = refs.get("abs_path") or f"{task_dir}/tests/refs.json"
+            t_items.append(f"[task] `tests/refs.json` (参考真值, 路径: `{p}`)")
         elif refs:
-            t_items.append("`tests/refs.json` 【缺失 / Missing】")
+            t_items.append("[task] `tests/refs.json` 【缺失 / Missing】")
         if t_items:
             lines.append("- **任务定义与参考真值**: " + ", ".join(t_items))
         else:
-            lines.append("- **任务定义与参考真值**: `instruction.md` (或 `solve.sh`)")
+            lines.append(
+                "- **任务定义与参考真值**: [task] `instruction.md` (或 `solve.sh`) 【缺失 / Missing】"
+            )
 
         # 4. Results
         res_json = art_map.get("results.json")
         if res_json:
             if res_json.get("exists"):
-                lines.append("- **计算产物提交**: 参见 `results.json` (Agent 最终生成数据)")
+                p = res_json.get("abs_path") or f"{trial_dir}/results.json"
+                lines.append(
+                    f"- **计算产物提交**: [trial] `results.json` (Agent 最终生成数据, 路径: `{p}`)"
+                )
             else:
                 lines.append(
-                    "- **计算产物提交**: `results.json` 【缺失 / Missing】(未生成有效产物)"
+                    "- **计算产物提交**: [trial] `results.json` 【缺失 / Missing】(未生成有效产物)"
                 )
 
         # 5. Output format
@@ -205,66 +227,84 @@ def _render_evidence_file_pointers(
             )
     else:
         lines.append("\n### Evidence File Pointers")
+        lines.append(
+            f"- **Root Context**: trial_dir=`{trial_dir}`, task_dir=`{task_dir}`, job_dir=`{job_dir}`"
+        )
         # 1. Trajectory
         traj = art_map.get("agent/trajectory.json")
         cc = art_map.get("agent/claude-code.txt")
         traj_items = []
         if traj and traj.get("exists"):
-            traj_items.append("`agent/trajectory.json` (interaction turns & tool calls)")
+            p = traj.get("abs_path") or f"{trial_dir}/agent/trajectory.json"
+            traj_items.append(
+                f"[trial] `agent/trajectory.json` (interaction turns & tool calls, path: `{p}`)"
+            )
         elif traj:
-            traj_items.append("`agent/trajectory.json` [Missing]")
+            traj_items.append("[trial] `agent/trajectory.json` [Missing]")
         if cc and cc.get("exists"):
-            traj_items.append("`agent/claude-code.txt` (execution log)")
+            p = cc.get("abs_path") or f"{trial_dir}/agent/claude-code.txt"
+            traj_items.append(f"[trial] `agent/claude-code.txt` (execution log, path: `{p}`)")
         elif cc and not traj:
-            traj_items.append("`agent/claude-code.txt` [Missing]")
+            traj_items.append("[trial] `agent/claude-code.txt` [Missing]")
         if traj_items:
             lines.append("- **Agent Trajectory & Commands**: " + ", ".join(traj_items))
         else:
-            lines.append("- **Agent Trajectory & Commands**: `agent/trajectory.json` [Missing]")
+            lines.append(
+                "- **Agent Trajectory & Commands**: [trial] `agent/trajectory.json` [Missing]"
+            )
 
         # 2. Verifier
         vlog = art_map.get("verifier/verify.log")
         vout = art_map.get("verifier/test-stdout.txt")
         v_items = []
         if vlog and vlog.get("exists"):
-            v_items.append("`verifier/verify.log` (judgment log)")
+            p = vlog.get("abs_path") or f"{trial_dir}/verifier/verify.log"
+            v_items.append(f"[trial] `verifier/verify.log` (judgment log, path: `{p}`)")
         elif vlog:
-            v_items.append("`verifier/verify.log` [Missing]")
+            v_items.append("[trial] `verifier/verify.log` [Missing]")
         if vout and vout.get("exists"):
-            v_items.append("`verifier/test-stdout.txt` (verifier stdout)")
+            p = vout.get("abs_path") or f"{trial_dir}/verifier/test-stdout.txt"
+            v_items.append(f"[trial] `verifier/test-stdout.txt` (verifier stdout, path: `{p}`)")
         elif vout and not vlog:
-            v_items.append("`verifier/test-stdout.txt` [Missing]")
+            v_items.append("[trial] `verifier/test-stdout.txt` [Missing]")
         if v_items:
             lines.append("- **Verifier Execution & Judgment**: " + ", ".join(v_items))
         else:
-            lines.append("- **Verifier Execution & Judgment**: `verifier/verify.log` [Missing]")
+            lines.append(
+                "- **Verifier Execution & Judgment**: [trial] `verifier/verify.log` [Missing]"
+            )
 
         # 3. Task
         inst = art_map.get("instruction.md")
         refs = art_map.get("tests/refs.json") or art_map.get("refs.json")
         t_items = []
         if inst and inst.get("exists"):
-            t_items.append("`instruction.md` (task prompt)")
+            p = inst.get("abs_path") or f"{task_dir}/instruction.md"
+            t_items.append(f"[task] `instruction.md` (task prompt, path: `{p}`)")
         elif inst:
-            t_items.append("`instruction.md` [Missing]")
+            t_items.append("[task] `instruction.md` [Missing]")
         if refs and refs.get("exists"):
-            t_items.append("`tests/refs.json` (ground truth)")
+            p = refs.get("abs_path") or f"{task_dir}/tests/refs.json"
+            t_items.append(f"[task] `tests/refs.json` (ground truth, path: `{p}`)")
         elif refs:
-            t_items.append("`tests/refs.json` [Missing]")
+            t_items.append("[task] `tests/refs.json` [Missing]")
         if t_items:
             lines.append("- **Task Specification & Reference Values**: " + ", ".join(t_items))
         else:
             lines.append(
-                "- **Task Specification & Reference Values**: `instruction.md` (or `solve.sh`)"
+                "- **Task Specification & Reference Values**: [task] `instruction.md` (or `solve.sh`) [Missing]"
             )
 
         # 4. Results
         res_json = art_map.get("results.json")
         if res_json:
             if res_json.get("exists"):
-                lines.append("- **Simulation Output Submission**: See `results.json`")
+                p = res_json.get("abs_path") or f"{trial_dir}/results.json"
+                lines.append(
+                    f"- **Simulation Output Submission**: [trial] `results.json` (simulation output, path: `{p}`)"
+                )
             else:
-                lines.append("- **Simulation Output Submission**: `results.json` [Missing]")
+                lines.append("- **Simulation Output Submission**: [trial] `results.json` [Missing]")
 
         # 5. Output format
         if output_format in ("json", "both"):

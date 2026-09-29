@@ -10,6 +10,7 @@ repository - these modules are maintained by hand from here, and
 `tests/test_attribution_characterization.py` will show any behavior change as a
 reviewable baseline diff.
 """
+
 from __future__ import annotations
 
 from confidence import attach_confidence_metadata
@@ -20,7 +21,6 @@ from typing import Any, Dict, Optional
 from ..context import AttributionContext
 
 
-
 def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     case_id = ctx.case_id
     runtime = ctx.runtime
@@ -28,11 +28,14 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     verifier_defect_contracts = ctx.verifier_defect_contracts
     verifier_obs = ctx.verifier_obs
 
-    verifier_crashes = [v for v in verifier_obs if v.get('type') == 'verifier_internal_crash']
+    verifier_crashes = [v for v in verifier_obs if v.get("type") == "verifier_internal_crash"]
     verifier_defects = verifier_defect_contracts
     triggered_hazards = [
-        v for v in verifier_obs
-        if v.get('triggered') and v.get('failure_binding') == 'direct' and v.get('type') != 'verifier_internal_crash'
+        v
+        for v in verifier_obs
+        if v.get("triggered")
+        and v.get("failure_binding") == "direct"
+        and v.get("type") != "verifier_internal_crash"
     ]
 
     if not (verifier_crashes or verifier_defects or triggered_hazards):
@@ -40,7 +43,11 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
             gate_id="gate3_verifier_defect",
             matched=False,
             reason="no verifier crash, verifier-alignment defect, or direct-bound parser hazard",
-            checks={"verifier_crashes": len(verifier_crashes), "verifier_defect_contracts": len(verifier_defects), "triggered_direct_hazards": len(triggered_hazards)},
+            checks={
+                "verifier_crashes": len(verifier_crashes),
+                "verifier_defect_contracts": len(verifier_defects),
+                "triggered_direct_hazards": len(triggered_hazards),
+            },
         )
         return None
 
@@ -55,8 +62,7 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     else:
         is_schema_mismatch = bool(vd and vd.get("alignment") == "verifier_schema_mismatch")
         is_regex_defect = bool(
-            (th and th.get("type") == "parser_hazard")
-            or (vd and "namelist" in vd.get("item", ""))
+            (th and th.get("type") == "parser_hazard") or (vd and "namelist" in vd.get("item", ""))
         )
         if is_schema_mismatch:
             code = "VERIFIER_SCHEMA_MISMATCH"
@@ -70,7 +76,11 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         summary = (
             vd["details"]
             if vd
-            else (th["summary"] if th else "Verifier parser/contract defect rejected valid agent output.")
+            else (
+                th["summary"]
+                if th
+                else "Verifier parser/contract defect rejected valid agent output."
+            )
         )
 
     ev_refs = []
@@ -145,7 +155,11 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         gate_id="gate3_verifier_defect",
         matched=True,
         reason="verifier crash, contract defect, or direct-bound parser hazard",
-        checks={"verifier_crashes": len(verifier_crashes), "verifier_defect_contracts": len(verifier_defects), "triggered_direct_hazards": len(triggered_hazards)},
+        checks={
+            "verifier_crashes": len(verifier_crashes),
+            "verifier_defect_contracts": len(verifier_defects),
+            "triggered_direct_hazards": len(triggered_hazards),
+        },
     )
 
     return {

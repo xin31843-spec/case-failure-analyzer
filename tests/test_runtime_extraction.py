@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for Phase 3 (`scripts/extract_runtime_errors.py`)."""
+
 from __future__ import annotations
 
 import json

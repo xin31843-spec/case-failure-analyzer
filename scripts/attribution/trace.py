@@ -15,6 +15,7 @@ Two invariants keep the trace safe to serialize into `analysis.json`:
 - Nothing time-dependent is recorded, so `analysis.json` stays byte-deterministic
   for snapshot comparison.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

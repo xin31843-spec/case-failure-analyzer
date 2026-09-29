@@ -15,6 +15,7 @@ Archetypes 1-7 are the 7 Golden Cases from Section 13.2 of the implementation
 specification. Archetype 8 covers the pre-startup rule with no recognizable
 infrastructure signature (Gate 1b), which no golden case exercised before.
 """
+
 from __future__ import annotations
 
 import json
@@ -170,8 +171,7 @@ def build_golden5_verifier_regex_d_exponent(root: Path) -> Tuple[Path, Path]:
     (task_dir / "tests").mkdir(parents=True)
     (task_dir / "instruction.md").write_text("Run calculation.", encoding="utf-8")
     (task_dir / "tests" / "verify.py").write_text(
-        "import re\n"
-        "VAL_RE = re.compile(r'VAL=\\s*([-\\d.E+]+)')\n",
+        "import re\nVAL_RE = re.compile(r'VAL=\\s*([-\\d.E+]+)')\n",
         encoding="utf-8",
     )
     (trial_dir / "agent" / "trajectory.json").write_text(
@@ -214,9 +214,7 @@ def build_golden7_unknown_missing_logs(root: Path) -> Tuple[Path, Path]:
     task_dir = root / "tasks" / "empty-task"
     trial_dir.mkdir(parents=True)
     task_dir.mkdir(parents=True)
-    (trial_dir / "result.json").write_text(
-        json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
-    )
+    (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
     return job_dir, task_dir
 
 
@@ -286,9 +284,7 @@ def build_golden10_insufficient_positive_agent_evidence(root: Path) -> Tuple[Pat
     (trial_dir / "agent" / "trajectory.json").write_text(
         json.dumps({"schema_version": "ATIF-v1.7", "steps": []}), encoding="utf-8"
     )
-    (trial_dir / "verifier" / "verify.log").write_text(
-        _ARCHETYPE10_VERIFY_LOG, encoding="utf-8"
-    )
+    (trial_dir / "verifier" / "verify.log").write_text(_ARCHETYPE10_VERIFY_LOG, encoding="utf-8")
     (trial_dir / "verifier" / "reward.txt").write_text("0", encoding="utf-8")
     return job_dir, task_dir
 

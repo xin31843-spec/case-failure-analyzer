@@ -13,6 +13,7 @@ repository - these modules are maintained by hand from here, and
 `tests/test_attribution_characterization.py` will show any behavior change as a
 reviewable baseline diff.
 """
+
 from __future__ import annotations
 
 from confidence import attach_confidence_metadata
@@ -20,7 +21,6 @@ from confidence import attach_confidence_metadata
 from typing import Any, Dict, Optional
 
 from ..context import AttributionContext
-
 
 
 def gate1a_infra_prestartup(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
@@ -31,14 +31,17 @@ def gate1a_infra_prestartup(ctx: AttributionContext) -> Optional[Dict[str, Any]]
     runtime = ctx.runtime
     trial_name = ctx.trial_name
 
-    causal_infra_errors = [e for e in errors if e.get('causal_candidate')]
+    causal_infra_errors = [e for e in errors if e.get("causal_candidate")]
 
     if agent_started or not causal_infra_errors:
         ctx.trace.record(
             gate_id="gate1a_infra_prestartup",
             matched=False,
             reason="agent started, or no causal infrastructure error was observed",
-            checks={"agent_started": agent_started, "causal_infra_errors": len(causal_infra_errors)},
+            checks={
+                "agent_started": agent_started,
+                "causal_infra_errors": len(causal_infra_errors),
+            },
         )
         return None
 
@@ -109,7 +112,11 @@ def gate1a_infra_prestartup(ctx: AttributionContext) -> Optional[Dict[str, Any]]
         gate_id="gate1a_infra_prestartup",
         matched=True,
         reason=f"fatal infrastructure during {primary_err.get('stage')} ({primary_err['code']}); agent never started",
-        checks={"agent_started": agent_started, "causal_infra_errors": len(causal_infra_errors), "primary_code": primary_err["code"]},
+        checks={
+            "agent_started": agent_started,
+            "causal_infra_errors": len(causal_infra_errors),
+            "primary_code": primary_err["code"],
+        },
     )
 
     return {
@@ -164,14 +171,17 @@ def gate1b_unknown_no_evidence(ctx: AttributionContext) -> Optional[Dict[str, An
     runtime = ctx.runtime
     trial_name = ctx.trial_name
 
-    causal_infra_errors = [e for e in errors if e.get('causal_candidate')]
+    causal_infra_errors = [e for e in errors if e.get("causal_candidate")]
 
     if agent_started or causal_infra_errors:
         ctx.trace.record(
             gate_id="gate1b_unknown_no_evidence",
             matched=False,
             reason="agent started, or a causal infrastructure error explains the failure",
-            checks={"agent_started": agent_started, "causal_infra_errors": len(causal_infra_errors)},
+            checks={
+                "agent_started": agent_started,
+                "causal_infra_errors": len(causal_infra_errors),
+            },
         )
         return None
 

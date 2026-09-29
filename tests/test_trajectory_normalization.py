@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for Phase 2 (`scripts/normalize_trajectory.py`)."""
+
 from __future__ import annotations
 
 import json

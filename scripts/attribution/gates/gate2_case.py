@@ -8,6 +8,7 @@ repository - these modules are maintained by hand from here, and
 `tests/test_attribution_characterization.py` will show any behavior change as a
 reviewable baseline diff.
 """
+
 from __future__ import annotations
 
 from confidence import attach_confidence_metadata
@@ -18,7 +19,6 @@ from typing import Any, Dict, Optional
 from ..context import AttributionContext
 
 
-
 def gate2_case_definition(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     case_id = ctx.case_id
     contracts = ctx.contracts
@@ -27,7 +27,7 @@ def gate2_case_definition(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     verifier_obs = ctx.verifier_obs
     verifier_started = ctx.verifier_started
 
-    case_defects = [c for c in contracts if c.get('alignment') == 'case_defect']
+    case_defects = [c for c in contracts if c.get("alignment") == "case_defect"]
 
     if not case_defects:
         ctx.trace.record(
@@ -45,12 +45,13 @@ def gate2_case_definition(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
 
     # Check if downstream verifier defects also co-occurred so neither is silently dropped
     co_verifier_defects = [
-        c for c in contracts
-        if c.get("alignment") in ("verifier_defect", "verifier_hidden_requirement", "verifier_schema_mismatch")
+        c
+        for c in contracts
+        if c.get("alignment")
+        in ("verifier_defect", "verifier_hidden_requirement", "verifier_schema_mismatch")
     ]
     co_triggered_hazards = [
-        v for v in verifier_obs
-        if v.get("triggered") and v.get("failure_binding") == "direct"
+        v for v in verifier_obs if v.get("triggered") and v.get("failure_binding") == "direct"
     ]
     contributing = []
     rec_actions = [
@@ -125,7 +126,11 @@ def gate2_case_definition(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         gate_id="gate2_case_definition",
         matched=True,
         reason=f"case contract defect: {cd['item']}",
-        checks={"case_defect_contracts": len(case_defects), "co_verifier_defects": len(co_verifier_defects), "co_triggered_hazards": len(co_triggered_hazards)},
+        checks={
+            "case_defect_contracts": len(case_defects),
+            "co_verifier_defects": len(co_verifier_defects),
+            "co_triggered_hazards": len(co_triggered_hazards),
+        },
     )
 
     return {

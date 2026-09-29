@@ -8,6 +8,7 @@ Guards two classes of defects fixed after review:
   2. Skill metadata must stay discoverable: hyphen-case `SKILL.md` name and a
      standard `agents/openai.yaml` `interface:` block.
 """
+
 from __future__ import annotations
 
 import json
@@ -136,7 +137,9 @@ class TestSkillMetadata(unittest.TestCase):
         interface = data["interface"]
         self.assertIn("display_name", interface)
         short = interface["short_description"]
-        self.assertTrue(25 <= len(short) <= 64, f"short_description length out of range: {len(short)}")
+        self.assertTrue(
+            25 <= len(short) <= 64, f"short_description length out of range: {len(short)}"
+        )
 
 
 if __name__ == "__main__":

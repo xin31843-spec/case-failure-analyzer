@@ -6,6 +6,7 @@ Verifies that `references/error-families.json`, `scripts/extract_scientific_erro
 and all 11 `references/software/*.md` knowledge base tables use identical `error_family`
 identifiers and that every documented family is registered and implemented.
 """
+
 from __future__ import annotations
 
 import re
@@ -34,7 +35,9 @@ class TestErrorFamilyRegistryAlignment(unittest.TestCase):
         total_documented = 0
         for md_path in software_files:
             software = md_path.stem
-            self.assertIn(software, registry, f"Software {software} missing from error-families.json")
+            self.assertIn(
+                software, registry, f"Software {software} missing from error-families.json"
+            )
             reg_families = registry[software]
 
             text = md_path.read_text(encoding="utf-8")

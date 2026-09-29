@@ -9,6 +9,7 @@ GROMACS/AMBER/OpenMM, MLIP, ASE, xTB, RDKit, and Generic Scientific) over trajec
 Outputs structured `scientific_observations` with `candidate_causes`, `aliases`, and
 `required_discriminating_evidence` without jumping directly to agent blame.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,9 +26,7 @@ AdapterEntry = Tuple[str, str, List[str], re.Pattern[str], List[str], List[str]]
 
 def load_error_family_registry(registry_path: Path = REGISTRY_PATH) -> Dict[str, Dict[str, Any]]:
     if not registry_path.is_file():
-        raise FileNotFoundError(
-            f"Scientific error family registry not found: {registry_path}"
-        )
+        raise FileNotFoundError(f"Scientific error family registry not found: {registry_path}")
     data = json.loads(registry_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not data:
         raise ValueError(
@@ -46,7 +45,9 @@ def build_scientific_adapters(
             raise ValueError(f"Invalid family mapping for software {software!r} in {registry_path}")
         for family_name, spec in families.items():
             if not isinstance(spec, dict):
-                raise ValueError(f"Invalid family spec for {software}.{family_name} in {registry_path}")
+                raise ValueError(
+                    f"Invalid family spec for {software}.{family_name} in {registry_path}"
+                )
             status = spec.get("status")
             if status not in ("implemented", "planned"):
                 raise ValueError(
@@ -139,7 +140,9 @@ def extract_scientific_errors(
                             and later_exit == 0
                             and later_ev.get("event_type") != "shell_error"
                             and not pattern.search(later_text)
-                            and not any(p[3].search(later_text) for p in SCIENTIFIC_ADAPTERS if p[0] == sw)
+                            and not any(
+                                p[3].search(later_text) for p in SCIENTIFIC_ADAPTERS if p[0] == sw
+                            )
                         ):
                             recovery_ref = later_ev.get("event_id")
                             break
@@ -265,8 +268,16 @@ def _extract_match_line(text: str, match: re.Match[str]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract scientific software error observations.")
-    parser.add_argument("--trial-dir", required=False, type=Path, default=None, help="Path to trial directory")
-    parser.add_argument("--trajectory-norm", required=False, type=Path, default=None, help="Normalized trajectory JSON")
+    parser.add_argument(
+        "--trial-dir", required=False, type=Path, default=None, help="Path to trial directory"
+    )
+    parser.add_argument(
+        "--trajectory-norm",
+        required=False,
+        type=Path,
+        default=None,
+        help="Normalized trajectory JSON",
+    )
     parser.add_argument("--output", required=True, type=Path, help="Output JSON path")
     args = parser.parse_args()
 

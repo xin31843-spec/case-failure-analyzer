@@ -12,6 +12,7 @@ Gate 6 always matches, so the loop always returns and the trailing `raise` is
 unreachable; it exists so that a future edit which makes Gate 6 conditional fails
 loudly instead of returning `None` into the caller.
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional, Tuple

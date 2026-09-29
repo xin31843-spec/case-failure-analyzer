@@ -31,6 +31,7 @@ Regenerate baselines after an INTENTIONAL output change:
 Review the resulting diff before committing — a baseline update is a claim that
 the output change was deliberate.
 """
+
 from __future__ import annotations
 
 import json
@@ -110,9 +111,7 @@ class TestAttributionCharacterization(unittest.TestCase):
         """A baseline without a builder is stale — it would never be exercised."""
         if not BASELINE_DIR.exists():
             self.skipTest("no baselines generated yet")
-        orphans = sorted(
-            p.stem for p in BASELINE_DIR.glob("*.json") if p.stem not in ARCHETYPES
-        )
+        orphans = sorted(p.stem for p in BASELINE_DIR.glob("*.json") if p.stem not in ARCHETYPES)
         self.assertEqual(orphans, [], f"Stale baseline files with no builder: {orphans}")
 
 

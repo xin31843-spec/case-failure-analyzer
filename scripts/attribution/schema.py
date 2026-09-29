@@ -10,6 +10,7 @@ key set and order is part of the output contract consumed by `validate_analysis.
 forgets a key fails loudly at construction instead of surfacing as a validator
 error at the end of the pipeline.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple
@@ -53,7 +54,5 @@ def make_attribution(**fields: Any) -> Dict[str, Any]:
     missing = [k for k in OUTCOME_KEYS if k not in fields]
     extra = [k for k in fields if k not in OUTCOME_KEYS]
     if missing or extra:
-        raise TypeError(
-            f"make_attribution contract violation: missing={missing} extra={extra}"
-        )
+        raise TypeError(f"make_attribution contract violation: missing={missing} extra={extra}")
     return {key: fields[key] for key in OUTCOME_KEYS}

@@ -6,6 +6,7 @@ Normalizes ATIF-v1.7 (and compatible) `agent/trajectory.json` files into a
 unified event timeline and derives objective behavioral signals with exact
 JSON pointers back to raw trajectory steps.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -129,7 +130,11 @@ def _convert_messages_to_steps(items: List[Dict[str, Any]]) -> List[Dict[str, An
         role = item.get("role") or item.get("source") or "agent"
         content = item.get("content")
         if isinstance(content, list):
-            text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+            text_parts = [
+                p.get("text", "")
+                for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            ]
             msg_str = "\n".join(t for t in text_parts if t)
         else:
             msg_str = str(content or item.get("message") or "")
@@ -175,7 +180,9 @@ def normalize_trajectory(
                 "written_files": [],
                 "read_files": [],
             }
-        raw = _parse_trajectory_payload(trajectory_path.read_text(encoding="utf-8", errors="replace"))
+        raw = _parse_trajectory_payload(
+            trajectory_path.read_text(encoding="utf-8", errors="replace")
+        )
     except Exception as exc:
         return {
             "exists": True,
@@ -255,7 +262,7 @@ def normalize_trajectory(
         # Map tool observations by source_call_id
         obs_by_call_id: Dict[str, str] = {}
         obs_block = step.get("observation") or {}
-        for res_item in (obs_block.get("results") or []):
+        for res_item in obs_block.get("results") or []:
             cid = res_item.get("source_call_id")
             content = res_item.get("content")
             if isinstance(content, list):
@@ -372,13 +379,18 @@ def normalize_trajectory(
                 ):
                     results_json_written = True
                     results_json_verified_after_write = False
-                elif results_json_written and "results.json" in norm_cmd and any(
-                    r in norm_cmd for r in ("cat ", "json.load", "head ")
+                elif (
+                    results_json_written
+                    and "results.json" in norm_cmd
+                    and any(r in norm_cmd for r in ("cat ", "json.load", "head "))
                 ):
                     results_json_verified_after_write = True
 
                 # Check if agent modified `/workspace/assets`
-                if re.search(r"(?:>|>>|sed\s+-i|cp\s+.*\s+/workspace/assets/|mv\s+.*\s+/workspace/assets/)", norm_cmd):
+                if re.search(
+                    r"(?:>|>>|sed\s+-i|cp\s+.*\s+/workspace/assets/|mv\s+.*\s+/workspace/assets/)",
+                    norm_cmd,
+                ):
                     signals.append(
                         {
                             "signal_id": f"sig:asset_mod:{step_id}:{t_idx}",
@@ -392,7 +404,14 @@ def normalize_trajectory(
                 # Check if scientific parameters were edited
                 if any(
                     p in norm_cmd
-                    for p in ("TIMESTEP", "ecutwfc", "MAX_SCF", "mixing_beta", "reset_timestep", "thermo_style")
+                    for p in (
+                        "TIMESTEP",
+                        "ecutwfc",
+                        "MAX_SCF",
+                        "mixing_beta",
+                        "reset_timestep",
+                        "thermo_style",
+                    )
                 ):
                     signals.append(
                         {
@@ -419,7 +438,10 @@ def normalize_trajectory(
                 if cmd_or_path.endswith("results.json"):
                     results_json_written = True
                     results_json_verified_after_write = False
-                    if not cmd_or_path.startswith("/workspace/results.json") and cmd_or_path != "results.json":
+                    if (
+                        not cmd_or_path.startswith("/workspace/results.json")
+                        and cmd_or_path != "results.json"
+                    ):
                         signals.append(
                             {
                                 "signal_id": f"sig:wrong_path:{step_id}:{t_idx}",
@@ -499,9 +521,15 @@ def normalize_trajectory(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Normalize ATIF agent trajectory into timeline events.")
-    parser.add_argument("--trajectory", required=True, type=Path, help="Path to agent/trajectory.json")
-    parser.add_argument("--max-obs-bytes", type=int, default=2000, help="Max bytes per observation snippet")
+    parser = argparse.ArgumentParser(
+        description="Normalize ATIF agent trajectory into timeline events."
+    )
+    parser.add_argument(
+        "--trajectory", required=True, type=Path, help="Path to agent/trajectory.json"
+    )
+    parser.add_argument(
+        "--max-obs-bytes", type=int, default=2000, help="Max bytes per observation snippet"
+    )
     parser.add_argument("--output", required=True, type=Path, help="Output JSON path")
     args = parser.parse_args()
 

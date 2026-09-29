@@ -23,6 +23,7 @@ Severity is about the *consequence*, not the exception:
   warning  - evidence was degraded; a conclusion may rest on less than it appears
   error    - a required input could not be read at all
 """
+
 from __future__ import annotations
 
 import json

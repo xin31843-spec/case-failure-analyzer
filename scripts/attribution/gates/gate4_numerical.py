@@ -28,25 +28,69 @@ def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, An
     runtime = ctx.runtime
     trial_name = ctx.trial_name
 
-    has_structured_numerical = bool(
+    has_ensemble_match = bool(
         re.search(
-            r"(?:trajectory_rmsd\s*=\s*[\d.]+|instantaneous_position.*?>\s*[\d.]+)",
-            fail_text,
-            re.IGNORECASE,
-        )
-        and re.search(
             r"(?:ensemble average matches|ensemble.*within tolerance|conserved.*matches)",
             fail_text,
             re.IGNORECASE,
         )
     )
+    has_trajectory_metric = bool(
+        re.search(
+            r"(?:trajectory_rmsd\s*=\s*[\d.]+|instantaneous_position.*?>\s*[\d.]+|coord(?:inate)?_rmsd\s*=\s*[\d.]+)",
+            fail_text,
+            re.IGNORECASE,
+        )
+    )
+    has_structured_numerical = has_ensemble_match and has_trajectory_metric
 
     if not has_structured_numerical:
         ctx.trace.record(
             gate_id="gate4_numerical_divergence",
             matched=False,
             reason="verifier log lacks the structured divergence + ensemble-agreement pair",
-            checks={"has_structured_numerical": has_structured_numerical},
+            checks={
+                "has_structured_numerical": False,
+                "has_ensemble_match": has_ensemble_match,
+                "has_trajectory_metric": has_trajectory_metric,
+            },
+        )
+        return None
+
+    # Direct causal binding: verify that the failing assertion in the verifier log
+    # is specifically evaluating the instantaneous trajectory/position comparison.
+    failure_lines = [
+        line.strip()
+        for line in fail_text.splitlines()
+        if re.search(
+            r"^(?:FAIL\b|AssertionError\b|Error\b|FAILED\b)|(?:^assert\s+)",
+            line.strip(),
+            re.IGNORECASE,
+        )
+    ]
+    if failure_lines:
+        bound_to_failure = any(
+            re.search(
+                r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?>|assert.*?(?:trajectory|rmsd|position)|FAIL.*?(?:trajectory|instantaneous|rmsd)",
+                fline,
+                re.IGNORECASE,
+            )
+            for fline in failure_lines
+        )
+    else:
+        bound_to_failure = bool(
+            re.search(r"(?:trajectory_rmsd|instantaneous_position).*?>", fail_text, re.IGNORECASE)
+        )
+
+    if not bound_to_failure:
+        ctx.trace.record(
+            gate_id="gate4_numerical_divergence",
+            matched=False,
+            reason="numerical metrics present in log but not causally bound to the failing verifier rule",
+            checks={
+                "has_structured_numerical": True,
+                "bound_to_failure": False,
+            },
         )
         return None
 

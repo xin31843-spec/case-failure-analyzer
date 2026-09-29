@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for Phase 1 (`scripts/discover_artifacts.py`)."""
+
 from __future__ import annotations
 
 import json

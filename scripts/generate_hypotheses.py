@@ -213,18 +213,61 @@ def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
     )
     if has_structured_numerical:
         ev_for = ["ver:fail_log"] if fail_log_obs else []
-        h = {
-            "hypothesis_id": f"H{h_idx}",
-            "category": "verifier",
-            "subtype": "tolerance_too_strict",
-            "code": "VERIFIER_TOLERANCE_TOO_STRICT",
-            "claim": "Verifier evaluated instantaneous trajectory/position divergence rather than ensemble averages, causing failure despite valid ensemble statistics.",
-            "evidence_for": ev_for,
-            "evidence_against": [],
-            "missing_evidence": [],
-            "counterfactual_test": "Verify ensemble averages or pin MPI/OMP thread count and RNG seed.",
-        }
-        attach_confidence_metadata(h, direct_causal_evidence=2, cross_source_corroboration=1)
+        failure_lines = [
+            line.strip()
+            for line in fail_text.splitlines()
+            if re.search(
+                r"^(?:FAIL\b|AssertionError\b|Error\b|FAILED\b)|(?:^assert\s+)",
+                line.strip(),
+                re.IGNORECASE,
+            )
+        ]
+        if failure_lines:
+            bound_to_failure = any(
+                re.search(
+                    r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?>|assert.*?(?:trajectory|rmsd|position)|FAIL.*?(?:trajectory|instantaneous|rmsd)",
+                    fline,
+                    re.IGNORECASE,
+                )
+                for fline in failure_lines
+            )
+        else:
+            bound_to_failure = bool(
+                re.search(
+                    r"(?:trajectory_rmsd|instantaneous_position).*?>", fail_text, re.IGNORECASE
+                )
+            )
+
+        if bound_to_failure:
+            h = {
+                "hypothesis_id": f"H{h_idx}",
+                "category": "verifier",
+                "subtype": "tolerance_too_strict",
+                "code": "VERIFIER_TOLERANCE_TOO_STRICT",
+                "claim": "Verifier evaluated instantaneous trajectory/position divergence rather than ensemble averages, causing failure despite valid ensemble statistics.",
+                "evidence_for": ev_for,
+                "evidence_against": [],
+                "missing_evidence": [],
+                "counterfactual_test": "Verify ensemble averages or pin MPI/OMP thread count and RNG seed.",
+            }
+            attach_confidence_metadata(h, direct_causal_evidence=2, cross_source_corroboration=1)
+        else:
+            h = {
+                "hypothesis_id": f"H{h_idx}",
+                "category": "verifier",
+                "subtype": "tolerance_too_strict",
+                "code": "VERIFIER_TOLERANCE_TOO_STRICT",
+                "claim": "Verifier log mentions trajectory divergence with matching ensemble averages, but direct causal binding to the failing assertion was not established.",
+                "evidence_for": ev_for,
+                "evidence_against": [],
+                "missing_evidence": [
+                    "Direct causal binding between verifier failure assertion and trajectory RMSD check"
+                ],
+                "counterfactual_test": "Verify whether the failing verifier assertion evaluates trajectory divergence vs ensemble statistics.",
+            }
+            attach_confidence_metadata(
+                h, direct_causal_evidence=1, missing_discriminating_evidence=1
+            )
         candidates.append(h)
         h_idx += 1
     elif has_partial_numerical_metric:

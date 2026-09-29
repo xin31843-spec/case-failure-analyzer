@@ -7,6 +7,7 @@ by extracting requirements from `instruction.md`, statically inspecting
 `tests/verify.py` with Python `ast` + pattern checks, checking `environment/assets/`,
 and correlating with `verifier/verify.log` and agent trajectory actions.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -164,7 +165,8 @@ class VerifierASTVisitor(ast.NodeVisitor):
             key_cand = node.slice.value
             if (
                 re.match(r"^[a-zA-Z0-9_]+$", key_cand)
-                and key_cand not in ("values", "units", "metadata", "results", "PATH", "HOME", "PYTHONPATH")
+                and key_cand
+                not in ("values", "units", "metadata", "results", "PATH", "HOME", "PYTHONPATH")
                 and key_cand not in self.checked_keys
             ):
                 self.checked_keys.append(key_cand)
@@ -265,7 +267,9 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
     # Hazard 2: Scientific notation regex that omits Fortran `D`/`d` exponent (`1.23D+03`)
     for pat in visitor.regex_patterns:
         pat_without_digit_esc = pat.replace("\\d", "")
-        if ("[-\\d.E+]+" in pat or "[-\\d.eE+]+" in pat) and "d" not in pat_without_digit_esc.lower():
+        if (
+            "[-\\d.E+]+" in pat or "[-\\d.eE+]+" in pat
+        ) and "d" not in pat_without_digit_esc.lower():
             hazards.append(
                 {
                     "hazard_type": "VERIFIER_REGEX_OR_PARSER_DEFECT",
@@ -277,7 +281,9 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
 
     # Hazard 3: Generic AST detection of positional `.split()` column indexing without header map
     parses_header_map = bool(
-        re.search(r"\.index\(\s*['\"](?:PotEng|pe|Step|Temp|Lx)['\"]\s*\)", code_text, re.IGNORECASE)
+        re.search(
+            r"\.index\(\s*['\"](?:PotEng|pe|Step|Temp|Lx)['\"]\s*\)", code_text, re.IGNORECASE
+        )
         or re.search(r"dict\(zip\(header", code_text, re.IGNORECASE)
     )
     if visitor.has_positional_split_index and not parses_header_map:
@@ -371,12 +377,18 @@ def audit_contract(
             f"Missing: {vfile}" in verify_log_text
             or (
                 vfile in verify_log_text
-                and re.search(r"(?:FileNotFoundError|No such file|not found|missing)", verify_log_text, re.IGNORECASE)
+                and re.search(
+                    r"(?:FileNotFoundError|No such file|not found|missing)",
+                    verify_log_text,
+                    re.IGNORECASE,
+                )
             )
         )
         status = "missing_at_verify" if missing_in_verify else "present"
         if not in_prompt:
-            alignment = "verifier_hidden_requirement" if missing_in_verify else "implicit_consistent"
+            alignment = (
+                "verifier_hidden_requirement" if missing_in_verify else "implicit_consistent"
+            )
         else:
             alignment = "agent_mismatch" if missing_in_verify else "consistent"
 
@@ -499,8 +511,7 @@ def audit_contract(
             )
             cid += 1
         elif sub == "implicit_thermo_column_index" and (
-            "!= log last line" in verify_log_text
-            and not prompt_info["specifies_thermo_columns"]
+            "!= log last line" in verify_log_text and not prompt_info["specifies_thermo_columns"]
         ):
             triggered = True
             failure_binding = "direct"
@@ -518,7 +529,11 @@ def audit_contract(
                         "Agent's `results.json` numerical values passed reference tolerance (`refs.json`), "
                         "but `verify.py` indexed `.split()` positionally without mapping the `Step` header columns."
                     ),
-                    "source_refs": ["task:instruction.md", "task:tests/verify.py", "verifier/verify.log"],
+                    "source_refs": [
+                        "task:instruction.md",
+                        "task:tests/verify.py",
+                        "verifier/verify.log",
+                    ],
                 }
             )
             cid += 1
@@ -568,7 +583,11 @@ def audit_contract(
                 and not has_parse_error_symptom
             )
 
-            if d_matches and (has_parse_error_symptom or prefix_matched_d_string) and not agent_wrote_different_e_value:
+            if (
+                d_matches
+                and (has_parse_error_symptom or prefix_matched_d_string)
+                and not agent_wrote_different_e_value
+            ):
                 triggered = True
                 failure_binding = "direct"
                 binding_evidence = ["ver:fail_log"]
@@ -579,7 +598,9 @@ def audit_contract(
         verifier_observations.append(
             {
                 "obs_id": f"ver:hazard:{h_idx}",
-                "type": "parser_hazard" if "REGEX" in h["hazard_type"] else "implicit_column_assumption",
+                "type": "parser_hazard"
+                if "REGEX" in h["hazard_type"]
+                else "implicit_column_assumption",
                 "summary": h["description"],
                 "matched_text": h["subtype"],
                 "hazard_detected": True,
@@ -603,10 +624,22 @@ def audit_contract(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Audit contract between Prompt, Verifier, and Agent output.")
-    parser.add_argument("--task", required=False, type=Path, default=None, help="Path to task directory")
-    parser.add_argument("--trial-dir", required=False, type=Path, default=None, help="Path to trial directory")
-    parser.add_argument("--trajectory-norm", required=False, type=Path, default=None, help="Normalized trajectory JSON")
+    parser = argparse.ArgumentParser(
+        description="Audit contract between Prompt, Verifier, and Agent output."
+    )
+    parser.add_argument(
+        "--task", required=False, type=Path, default=None, help="Path to task directory"
+    )
+    parser.add_argument(
+        "--trial-dir", required=False, type=Path, default=None, help="Path to trial directory"
+    )
+    parser.add_argument(
+        "--trajectory-norm",
+        required=False,
+        type=Path,
+        default=None,
+        help="Normalized trajectory JSON",
+    )
     parser.add_argument("--output", required=True, type=Path, help="Output JSON path")
     args = parser.parse_args()
 

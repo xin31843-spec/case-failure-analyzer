@@ -6,6 +6,7 @@ Pure leaf module: no local imports, so any gate or module may depend on it
 without creating a cycle. Relocated verbatim from `analyze_case.py` so the
 attribution gates no longer have to import back into the entrypoint.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple

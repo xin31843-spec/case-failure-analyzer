@@ -82,36 +82,56 @@ Gate order is load-bearing and is pinned by tests — do not reorder gates or co
 ### Model-in-the-Loop Attribution (optional)
 
 `--phase all` emits a conservative, fully deterministic draft `analysis.json`. To substitute a
-model-authored attribution, write or edit `analysis.json` by hand and validate/render it explicitly:
+model-authored attribution, write or edit `analysis.json` by hand, then validate JSON, render reports, and validate the rendered output:
 
 ```bash
+# Step 1: Validate structural constraints & machine-checked hard rules on analysis.json
 python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/validate_analysis.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
-  --analysis failure-analysis/<case_id>/analysis.json \
-  --report  failure-analysis/<case_id>/report.md
+  --analysis failure-analysis/<case_id>/analysis.json
 
+# Step 2: Render bilingual report and skill prescription
 python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/render_report.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
   --analysis failure-analysis/<case_id>/analysis.json \
   --output-report failure-analysis/<case_id>/report.md \
   --output-prescription failure-analysis/<case_id>/skill-prescription.md \
   --lang bilingual
+
+# Step 3: Validate the rendered report structure
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/validate_analysis.py" \
+  --evidence failure-analysis/<case_id>/evidence.json \
+  --analysis failure-analysis/<case_id>/analysis.json \
+  --report  failure-analysis/<case_id>/report.md
 ```
 
-`validate_analysis.py` enforces every Hard Rule below; a rejected `analysis.json` must be corrected, never rendered.
+`validate_analysis.py` deterministically verifies the machine-checkable Hard Rules below; a rejected `analysis.json` must be corrected, never rendered. Higher-level scientific domain rationale and counterfactual plausibility require expert review.
 
 ### Attribution Constraints (Hard Rules)
 
-1. **Do not classify solely from an error string or bare keyword.** A `Connection failed`, `SCF NOT CONVERGED`, or bare `chaotic` string is only causal if supported by structured evidence and unrecovered downstream impact.
-2. **Distinguish symptom, detection point, and root cause.** A failure detected in `verifier_execution` (`FAIL: ...`) may be caused by `verifier` (parser defect or internal crash), `case` (ambiguous spec or missing asset), `agent` (wrong calculation), or `numerical` drift.
-3. **Pre-startup rule (`runtime.agent_started == false`):**
-   - If `runtime.agent_started == false` AND fatal infrastructure evidence exists -> `primary_root_cause.category` MUST be `infra`.
-   - If `runtime.agent_started == false` AND no infrastructure/exception logs exist -> `primary_root_cause.category` MUST be `unknown` (`UNKNOWN_INSUFFICIENT_EVIDENCE`).
-   - If `runtime.agent_started == false` -> `primary_root_cause.category` is **STRICTLY FORBIDDEN** from being `agent`.
-4. **Positive evidence is required for `agent` attribution.** `reward == 0` or `FAIL` in `verify.log` alone is NOT positive agent evidence. At least one positive agent signal (`behavioral_signals`, `agent_mismatch`, agent timeline error, or agent-caused `scientific_observations`) must be cited.
-5. **A static verifier hazard must be causally bound (`failure_binding == "direct"`).** An unrelated `1.23D+03` reference number in `verify.log` when the agent wrote `9.99E+02` must NOT trigger `verifier`. Conversely, a verifier internal crash (`FileNotFoundError` on verifier temp/ref paths) MUST be attributed to `verifier` (`VERIFIER_RECOMPUTE_DEFECT`), never `agent`.
-6. **Use `unknown` when evidence cannot distinguish competing hypotheses.**
-7. **Generate `skill-prescription.md` ONLY for reusable, generalizable agent capability gaps.** Never generate a domain skill to work around an infrastructure failure, case defect, or verifier bug.
+#### Machine-Checked Constraints (enforced by `validate_analysis.py`)
+1. **Pre-startup rules (`runtime.agent_started == false`):**
+   - If fatal infrastructure evidence exists -> `primary_root_cause.category` MUST be `infra`.
+   - If no infrastructure/exception logs exist -> `primary_root_cause.category` MUST be `unknown` (`UNKNOWN_INSUFFICIENT_EVIDENCE`).
+   - `primary_root_cause.category` is **STRICTLY FORBIDDEN** from being `agent`.
+2. **Positive evidence requirement for `agent`:**
+   - `reward == 0` or `FAIL` in `verify.log` alone is NOT positive agent evidence.
+   - At least one positive agent signal (`behavioral_signals`, `agent_mismatch`, agent timeline error, or agent-caused `scientific_observations`) must be cited in `evidence_refs`.
+3. **Verifier internal crash priority & static hazard binding:**
+   - A verifier internal crash (`FileNotFoundError` on verifier temp/ref paths) MUST be attributed to `verifier` (`VERIFIER_RECOMPUTE_DEFECT`), never `agent`.
+   - A static verifier hazard without direct failure binding (`failure_binding != "direct"`) cannot serve as evidence for `verifier`.
+4. **Skill prescription policy:**
+   - `skill_prescription` is **FORBIDDEN** unless `primary_root_cause.category` is `agent`.
+5. **Structural & resolution integrity:**
+   - All `evidence_refs` and hypothesis evidence pointers must resolve in `evidence.json`.
+   - `first_unrecovered_deviation` and `competing_hypotheses` must be populated with valid status and evidence.
+   - Rendered `report.md` must contain all 4 required bilingual section headers with non-empty content.
+
+#### Expert / Human Review Constraints
+1. **Do not classify solely from an error string or bare keyword:** Ensure that solver errors or warning strings had unrecovered downstream impact rather than transient recovery.
+2. **Distinguish symptom, detection point, and root cause:** Confirm that the primary root cause reflects the earliest unrecovered deviation rather than downstream detection symptoms.
+3. **Counterfactual test plausibility:** Verify that proposed counterfactual interventions in `competing_hypotheses` are scientifically meaningful and testable.
+4. **Skill generalizability:** Verify that an agent skill prescription targets an enduring, reusable capability gap across scientific benchmarks rather than an ad-hoc workaround for a single task.
 
 ---
 

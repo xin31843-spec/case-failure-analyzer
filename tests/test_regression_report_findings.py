@@ -3,6 +3,7 @@
 Regression test suite for verification and attribution findings
 (`tests/test_regression_report_findings.py`).
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,9 @@ class TestReportRegressionFindings(unittest.TestCase):
                 json.dumps({"n_total_trials": 2, "stats": {"n_errored_trials": 1}}),
                 encoding="utf-8",
             )
-            (trial_a / "exception.txt").write_text("RuntimeError: container failed", encoding="utf-8")
+            (trial_a / "exception.txt").write_text(
+                "RuntimeError: container failed", encoding="utf-8"
+            )
             (trial_b / "agent" / "trajectory.json").write_text(
                 json.dumps({"schema_version": "ATIF-v1.7", "steps": []}),
                 encoding="utf-8",
@@ -164,7 +167,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             job_dir = Path(tmp) / "jobs" / "claude-txt-job"
             trial_dir = job_dir / "trial_1"
             (trial_dir / "agent").mkdir(parents=True)
-            (trial_dir / "agent" / "claude-code.txt").write_text("Agent session log...", encoding="utf-8")
+            (trial_dir / "agent" / "claude-code.txt").write_text(
+                "Agent session log...", encoding="utf-8"
+            )
 
             disc = discover_all(job_path=job_dir)
             ext = extract_runtime_errors(job_dir=job_dir, trial_dir=trial_dir)
@@ -178,7 +183,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             trial_dir = job_dir / "trial_1"
             trial_dir.mkdir(parents=True)
             (job_dir / "result.json").write_text(json.dumps({"stats": None}), encoding="utf-8")
-            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            (trial_dir / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
+            )
 
             disc = discover_all(job_path=job_dir)
             self.assertEqual(disc["trials"][0]["metadata"]["job_stats"]["n_errored_trials"], 0)
@@ -187,7 +194,9 @@ class TestReportRegressionFindings(unittest.TestCase):
         """#8: validate_all must fail when competing_hypotheses or first_unrecovered_deviation is missing."""
         ev = {
             "case_id": "c1",
-            "artifacts": [{"artifact_id": "art:trial_result", "rel_path": "result.json", "scope": "trial"}],
+            "artifacts": [
+                {"artifact_id": "art:trial_result", "rel_path": "result.json", "scope": "trial"}
+            ],
             "runtime": {"agent_started": True, "verifier_started": True},
             "timeline": [],
             "error_observations": [],
@@ -203,7 +212,12 @@ class TestReportRegressionFindings(unittest.TestCase):
             "failure_stage": "unknown",
             "detection_stage": "runner",
             "failure_manifestation": {"type": "unknown", "summary": "fail"},
-            "primary_root_cause": {"category": "unknown", "subtype": "insufficient_evidence", "code": "UNKNOWN_INSUFFICIENT_EVIDENCE", "confidence": 0.3},
+            "primary_root_cause": {
+                "category": "unknown",
+                "subtype": "insufficient_evidence",
+                "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+                "confidence": 0.3,
+            },
             "contributing_factors": [],
             "evidence_refs": ["art:trial_result"],
             "excluded_hypotheses": [],
@@ -212,7 +226,9 @@ class TestReportRegressionFindings(unittest.TestCase):
         }
         ok, errs = validate_all(ev, incomplete_analysis)
         self.assertFalse(ok)
-        self.assertTrue(any("competing_hypotheses" in e or "first_unrecovered_deviation" in e for e in errs))
+        self.assertTrue(
+            any("competing_hypotheses" in e or "first_unrecovered_deviation" in e for e in errs)
+        )
 
     def test_09_validator_rejects_single_line_or_empty_section_report(self) -> None:
         """#9: validate_all must reject single-line section titles or empty bodies in report.md."""
@@ -220,7 +236,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             job_dir = Path(tmp) / "jobs" / "empty-case"
             trial_dir = job_dir / "trial_1"
             trial_dir.mkdir(parents=True)
-            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            (trial_dir / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
+            )
             disc = discover_all(job_path=job_dir)
             ev, an, _, _ = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
 
@@ -235,7 +253,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             job_dir = Path(tmp) / "jobs" / "replay-job"
             trial_dir = job_dir / "trial_1"
             trial_dir.mkdir(parents=True)
-            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            (trial_dir / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
+            )
             disc = discover_all(job_path=job_dir)
             with self.assertRaises(ReplayNotSupportedError):
                 analyze_single_trial(disc["trials"][0], job_dir=job_dir, replay_mode="verifier")
@@ -264,7 +284,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             job_dir = Path(tmp) / "jobs" / "bi-job"
             trial_dir = job_dir / "trial_1"
             trial_dir.mkdir(parents=True)
-            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            (trial_dir / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
+            )
             disc = discover_all(job_path=job_dir)
             ev, an, rep, skill_md = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
             out_dir = Path(tmp) / "out"
@@ -272,11 +294,19 @@ class TestReportRegressionFindings(unittest.TestCase):
             self.assertTrue((out_dir / "report.md").is_file())
             self.assertTrue((out_dir / "report.zh.md").is_file())
             self.assertTrue((out_dir / "report.en.md").is_file())
-            self.assertIn("Part II: English Edition", (out_dir / "report.md").read_text(encoding="utf-8"))
+            self.assertIn(
+                "Part II: English Edition", (out_dir / "report.md").read_text(encoding="utf-8")
+            )
 
     def test_13_persistent_fixture_tree_and_cli_phases(self) -> None:
         """Verify persistent directory tree fixture under tests/fixtures/regressions/ and CLI --phase/--trial/--format."""
-        fixture_job = Path(__file__).resolve().parent / "fixtures" / "regressions" / "mixed-job-success-trial" / "job"
+        fixture_job = (
+            Path(__file__).resolve().parent
+            / "fixtures"
+            / "regressions"
+            / "mixed-job-success-trial"
+            / "job"
+        )
         self.assertTrue(fixture_job.is_dir())
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "cli_out"
@@ -309,7 +339,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             trial_1 = job_dir / "trial_1"
             trial_1.mkdir(parents=True)
             (trial_1 / "trial.log").write_text("step 1", encoding="utf-8")
-            (trial_1 / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            (trial_1 / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
+            )
 
             disc = discover_all(job_path=job_dir)
             self.assertEqual(len(disc["trials"]), 1)
@@ -386,7 +418,9 @@ class TestReportRegressionFindings(unittest.TestCase):
         self.assertEqual((c0, s0), (0.0, "low"))
         c_pass, _, s_pass = compute_evidence_confidence(verdict_passed=True)
         self.assertEqual((c_pass, s_pass), (1.0, "high"))
-        c3, _, s3 = compute_evidence_confidence(direct_causal_evidence=2, cross_source_corroboration=1)
+        c3, _, s3 = compute_evidence_confidence(
+            direct_causal_evidence=2, cross_source_corroboration=1
+        )
         self.assertEqual(c3, round(3 / MAX_EVIDENCE_POINTS, 2))
         self.assertEqual(s3, "medium")
 
@@ -413,7 +447,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             job_dir = Path(tmp) / "jobs" / "bi-full-job"
             trial_dir = job_dir / "trial_1"
             trial_dir.mkdir(parents=True)
-            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            (trial_dir / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
+            )
             disc = discover_all(job_path=job_dir)
             ev, an, rep, skill_md = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
             out_dir = Path(tmp) / "out"
@@ -446,7 +482,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             trial_a = job_dir_a / "trial_1"
             (trial_a / "agent").mkdir(parents=True)
             (trial_a / "verifier").mkdir(parents=True)
-            (trial_a / "result.json").write_text(json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8")
+            (trial_a / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8"
+            )
             (trial_a / "results.json").write_text(json.dumps({"energy": -10.5}), encoding="utf-8")
             (trial_a / "verifier" / "reward.txt").write_text("0\n", encoding="utf-8")
             (trial_a / "verifier" / "verify.log").write_text(
@@ -485,8 +523,12 @@ class TestReportRegressionFindings(unittest.TestCase):
             trial_b = job_dir_b / "trial_1"
             (trial_b / "agent").mkdir(parents=True)
             (trial_b / "verifier").mkdir(parents=True)
-            (trial_b / "result.json").write_text(json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8")
-            (trial_b / "results.json").write_text(json.dumps({"total_energy": -10.5}), encoding="utf-8")
+            (trial_b / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8"
+            )
+            (trial_b / "results.json").write_text(
+                json.dumps({"total_energy": -10.5}), encoding="utf-8"
+            )
             (trial_b / "verifier" / "reward.txt").write_text("0\n", encoding="utf-8")
             (trial_b / "verifier" / "verify.log").write_text(
                 "KeyError: 'virial_stress'\n",
@@ -509,7 +551,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             job_dir = Path(tmp) / "jobs" / "cli-job"
             trial_dir = job_dir / "trial_1"
             trial_dir.mkdir(parents=True)
-            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1"}), encoding="utf-8")
+            (trial_dir / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
+            )
             out_dir = Path(tmp) / "out_replay"
 
             proc_replay = subprocess.run(
@@ -574,9 +618,13 @@ class TestReportRegressionFindings(unittest.TestCase):
             trial_dir = job_dir / "trial_1"
             (trial_dir / "agent").mkdir(parents=True)
             (trial_dir / "verifier").mkdir(parents=True)
-            (trial_dir / "result.json").write_text(json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8")
+            (trial_dir / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1", "reward": 0.0}), encoding="utf-8"
+            )
             (trial_dir / "verifier" / "reward.txt").write_text("0\n", encoding="utf-8")
-            (trial_dir / "verifier" / "verify.log").write_text("Verification failed: unexpected post-processing condition\n", encoding="utf-8")
+            (trial_dir / "verifier" / "verify.log").write_text(
+                "Verification failed: unexpected post-processing condition\n", encoding="utf-8"
+            )
 
             # Step 1: pw.x fails with SCF nonconvergence
             # Step 2: Agent adjusts mixing_beta and re-runs pw.x -> exit_code 0, JOB DONE (recovered!)
@@ -631,7 +679,9 @@ class TestReportRegressionFindings(unittest.TestCase):
             # The SCF error in step 1 must be marked recovered=True and MUST NOT be blamed as AGENT_SCIENTIFIC_PARAMETER_SELECTION
             self.assertEqual(len(ev["scientific_observations"]), 1)
             self.assertTrue(ev["scientific_observations"][0]["recovered"])
-            self.assertEqual(ev["scientific_observations"][0]["recovery_event_ref"], "trajectory:step:2:tool:0")
+            self.assertEqual(
+                ev["scientific_observations"][0]["recovery_event_ref"], "trajectory:step:2:tool:0"
+            )
             self.assertNotIn(
                 an["primary_root_cause"]["code"],
                 ("AGENT_SCIENTIFIC_PARAMETER_SELECTION", "AGENT_ERROR_DIAGNOSIS"),
@@ -661,5 +711,3 @@ class TestReportRegressionFindings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

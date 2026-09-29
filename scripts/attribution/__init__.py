@@ -26,6 +26,7 @@ after `scripts/` has been placed on `sys.path` (see the SCRIPT_DIR preamble in
 No module in this package may import `analyze_case`: the dependency direction is
 one-way. `tests/test_attribution_decisions.py` enforces both rules.
 """
+
 from __future__ import annotations
 
 __all__ = ["OUTCOME_KEYS", "make_attribution"]

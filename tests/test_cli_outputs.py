@@ -9,6 +9,7 @@ subdirectories plus `job_summary.json`), and `--phase collect`.
 Every subprocess test in the suite before this file ran a single-trial job, so the
 multi-trial branch in `main()` was entirely untested.
 """
+
 from __future__ import annotations
 
 import json
@@ -38,8 +39,16 @@ class TestFormatFilter(unittest.TestCase):
     def _run(self, fmt: str) -> Path:
         tmp = Path(tempfile.mkdtemp())
         out = tmp / "out"
-        proc = run_cli("--job", str(FIXTURE_JOB), "--trial", "trial_b_pass",
-                       "--output", str(out), "--format", fmt)
+        proc = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--trial",
+            "trial_b_pass",
+            "--output",
+            str(out),
+            "--format",
+            fmt,
+        )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return out
 
@@ -92,8 +101,9 @@ class TestMultiTrialLayout(unittest.TestCase):
     def test_phase_collect_writes_no_analysis(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         out = tmp / "out"
-        proc = run_cli("--job", str(FIXTURE_JOB), "--output", str(out),
-                       "--trial", "all", "--phase", "collect")
+        proc = run_cli(
+            "--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "all", "--phase", "collect"
+        )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue((out / "trial_a_fail" / "evidence.json").is_file())
         self.assertTrue((out / "trial_a_fail" / "candidate-hypotheses.json").is_file())
@@ -101,15 +111,137 @@ class TestMultiTrialLayout(unittest.TestCase):
         self.assertFalse((out / "trial_a_fail" / "report.md").exists())
 
 
-class TestInvalidInputWritesNothing(unittest.TestCase):
-    """`--job` resolution failures must exit 2 before creating the output tree."""
+class TestLifecycleAndRerun(unittest.TestCase):
+    """Lifecycle tests: empty parameter combinations fail, and reruns purge stale artifacts."""
 
-    def test_nonexistent_job_creates_no_output_directory(self) -> None:
+    def test_collect_phase_with_markdown_format_exits_2(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         out = tmp / "out"
-        proc = run_cli("--job", str(tmp / "does-not-exist"), "--output", str(out))
+        proc = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--trial",
+            "trial_b_pass",
+            "--output",
+            str(out),
+            "--phase",
+            "collect",
+            "--format",
+            "markdown",
+        )
         self.assertEqual(proc.returncode, 2)
-        self.assertFalse(out.exists(), "a rejected run must not create its output directory")
+        self.assertIn("does not produce markdown reports", proc.stderr)
+        self.assertFalse(out.exists())
+
+    def test_rerun_collect_purges_stale_markdown_and_analysis(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+
+        # 1. Initial run with all artifacts
+        proc1 = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--trial",
+            "trial_b_pass",
+            "--output",
+            str(out),
+            "--phase",
+            "all",
+            "--format",
+            "both",
+        )
+        self.assertEqual(proc1.returncode, 0, proc1.stderr)
+        for name in JSON_ARTIFACTS + MARKDOWN_ARTIFACTS:
+            self.assertTrue((out / name).is_file(), f"{name} must exist after run 1")
+
+        # 2. Subsequent rerun with phase collect & format json into the SAME directory
+        proc2 = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--trial",
+            "trial_b_pass",
+            "--output",
+            str(out),
+            "--phase",
+            "collect",
+            "--format",
+            "json",
+        )
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+
+        # Collect artifacts must exist
+        self.assertTrue((out / "evidence.json").is_file())
+        self.assertTrue((out / "candidate-hypotheses.json").is_file())
+
+        # Old analysis and markdown reports must be purged
+        self.assertFalse((out / "analysis.json").exists())
+        for name in MARKDOWN_ARTIFACTS:
+            self.assertFalse((out / name).exists(), f"stale {name} must be purged on collect rerun")
+
+    def test_rerun_markdown_purges_stale_json(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+
+        # 1. Initial run with all artifacts
+        proc1 = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--trial",
+            "trial_b_pass",
+            "--output",
+            str(out),
+            "--format",
+            "both",
+        )
+        self.assertEqual(proc1.returncode, 0, proc1.stderr)
+
+        # 2. Subsequent rerun with format markdown only
+        proc2 = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--trial",
+            "trial_b_pass",
+            "--output",
+            str(out),
+            "--format",
+            "markdown",
+        )
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+
+        for name in MARKDOWN_ARTIFACTS:
+            self.assertTrue((out / name).is_file())
+        for name in JSON_ARTIFACTS:
+            self.assertFalse(
+                (out / name).exists(), f"stale {name} must be purged on markdown-only rerun"
+            )
+
+    def test_single_trial_purges_stale_job_summary(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+
+        # 1. Multi-trial run produces job_summary.json
+        proc1 = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--output",
+            str(out),
+            "--trial",
+            "all",
+        )
+        self.assertEqual(proc1.returncode, 0, proc1.stderr)
+        self.assertTrue((out / "job_summary.json").is_file())
+
+        # 2. Single trial run targeting the same output root purges stale job_summary.json
+        proc2 = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--output",
+            str(out),
+            "--trial",
+            "trial_b_pass",
+        )
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertFalse((out / "job_summary.json").exists())
 
 
 if __name__ == "__main__":

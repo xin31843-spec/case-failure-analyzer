@@ -306,6 +306,37 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
         {"not_gate_id": "gate4_numerical_divergence", "not_category": "verifier"},
     ),
     (
+        "gate4 abstains when numerical metrics exist in log but failure check is unrelated",
+        _evidence(
+            verifier_observations=[
+                _fail_log(
+                    "INFO: instantaneous_position trajectory_rmsd=0.45 (ensemble average matches)\n"
+                    "FAIL: results.json missing key 'energy'"
+                )
+            ]
+        ),
+        {
+            "not_gate_id": "gate4_numerical_divergence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+        },
+    ),
+    (
+        "gate4 abstains when trajectory diverges but ensemble statistics also fail",
+        _evidence(
+            verifier_observations=[
+                _fail_log(
+                    "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 (ensemble average diverged by 50%)"
+                )
+            ]
+        ),
+        {
+            "not_gate_id": "gate4_numerical_divergence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+        },
+    ),
+    (
         "gate5 failed with no positive agent evidence (rule 4)",
         _evidence(verifier_observations=[_fail_log("FAIL: agent output absent")]),
         {

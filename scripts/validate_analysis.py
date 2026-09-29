@@ -183,12 +183,39 @@ def validate_all(
     if not isinstance(conf, (int, float)) or not (0.0 <= float(conf) <= 1.0):
         errors.append(f"Invalid primary_root_cause.confidence: {conf!r}; must be in [0.0, 1.0]")
 
-    # 3. Hard Rule: No false-agent-blame when agent did not start
+    # 3. Hard Rule: Pre-startup constraints when agent did not start (Hard Rule 3)
     agent_started = bool((evidence.get("runtime") or {}).get("agent_started", False))
-    if not agent_started and cat == "agent":
+    if not agent_started:
+        if cat == "agent":
+            errors.append(
+                "FALSE_AGENT_BLAME violation: primary_root_cause.category is 'agent' "
+                "when runtime.agent_started is False."
+            )
+        elif verdict in ("failed", "errored"):
+            causal_infra_errors = [
+                e for e in (evidence.get("error_observations") or []) if e.get("causal_candidate")
+            ]
+            if causal_infra_errors and cat != "infra":
+                errors.append(
+                    f"PRESTARTUP_INFRA_VIOLATION: runtime.agent_started is False and fatal "
+                    f"infrastructure evidence exists, so category must be 'infra', got {cat!r}."
+                )
+            elif not causal_infra_errors and cat != "unknown":
+                errors.append(
+                    f"PRESTARTUP_UNKNOWN_VIOLATION: runtime.agent_started is False and no fatal "
+                    f"infrastructure evidence exists, so category must be 'unknown', got {cat!r}."
+                )
+
+    # Hard Rule 5: Verifier internal crash priority (cannot blame agent)
+    verifier_crashes = [
+        v
+        for v in (evidence.get("verifier_observations") or [])
+        if v.get("type") == "verifier_internal_crash"
+    ]
+    if verifier_crashes and cat == "agent":
         errors.append(
-            "FALSE_AGENT_BLAME violation: primary_root_cause.category is 'agent' "
-            "when runtime.agent_started is False."
+            "VERIFIER_CRASH_BLAME violation: verifier internal crash detected, "
+            "primary_root_cause.category cannot be 'agent'."
         )
 
     valid_ids = collect_valid_evidence_ids(evidence)
@@ -263,6 +290,20 @@ def validate_all(
                 "but `evidence_refs` does not cite any positive agent evidence "
                 "(behavioral_signal, agent_mismatch contract, agent timeline event, or scientific_observation)."
             )
+    elif cat == "verifier":
+        unbound_hazards = {
+            v.get("obs_id")
+            for v in (evidence.get("verifier_observations") or [])
+            if v.get("hazard_detected")
+            and not v.get("triggered")
+            and v.get("failure_binding") != "direct"
+        }
+        for ref in ev_refs:
+            if ref in unbound_hazards:
+                errors.append(
+                    f"UNBOUND_VERIFIER_HAZARD violation: static verifier hazard {ref!r} cited "
+                    "in evidence_refs without direct failure binding."
+                )
 
     # 7. Hard Rule: Skill prescription only allowed when primary_root_cause is 'agent'
     if analysis.get("skill_prescription") is not None and cat != "agent":

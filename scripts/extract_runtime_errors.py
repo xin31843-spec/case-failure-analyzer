@@ -7,6 +7,7 @@ errors from `result.json`, `exception.txt`, `trial.log`, and `job.log`.
 Crucially distinguishes fatal causal candidates (`causal_candidate=True`) from
 recovered transient warnings (`transient=True`).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -184,10 +185,7 @@ def extract_runtime_errors(
     agent_started = bool(rt_state["agent_started"])
     verifier_started = bool(rt_state["verifier_started"])
     exc_info = trial_res.get("exception_info")
-    has_unrecovered_runner_failure = bool(
-        rt_state["has_trial_exception"]
-        or not agent_started
-    )
+    has_unrecovered_runner_failure = bool(rt_state["has_trial_exception"] or not agent_started)
 
     sources_to_scan: List[Tuple[str, str, str]] = []
     if isinstance(exc_info, dict) and exc_info.get("exception_message"):
@@ -302,10 +300,16 @@ def extract_runtime_errors(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract runtime and infrastructure error observations.")
+    parser = argparse.ArgumentParser(
+        description="Extract runtime and infrastructure error observations."
+    )
     parser.add_argument("--job", required=True, type=Path, help="Path to job directory")
-    parser.add_argument("--trial-dir", required=False, type=Path, default=None, help="Path to trial directory")
-    parser.add_argument("--max-log-bytes", type=int, default=120000, help="Max bytes to read from logs")
+    parser.add_argument(
+        "--trial-dir", required=False, type=Path, default=None, help="Path to trial directory"
+    )
+    parser.add_argument(
+        "--max-log-bytes", type=int, default=120000, help="Max bytes to read from logs"
+    )
     parser.add_argument("--output", required=True, type=Path, help="Output JSON path")
     args = parser.parse_args()
 

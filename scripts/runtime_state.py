@@ -7,6 +7,7 @@ Provides a single source of truth for per-trial execution state, stage gates
 `verdict`, and legacy `exit_status`. Never leaks job-level aggregate error counts
 (`stats.n_errored_trials`) into individual trial verdicts.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -125,8 +126,7 @@ def compute_runtime_state(
     diagnostics: List[Dict[str, Any]] = []
 
     traj_exists = bool(
-        trial_dir
-        and any((trial_dir / rel).is_file() for rel in TRAJECTORY_REL_PATHS)
+        trial_dir and any((trial_dir / rel).is_file() for rel in TRAJECTORY_REL_PATHS)
     )
     claude_txt_exists = bool(
         trial_dir
@@ -165,9 +165,7 @@ def compute_runtime_state(
             or (trial_dir / "reward.txt").is_file()
         )
     )
-    exception_txt_exists = bool(
-        trial_dir and (trial_dir / "exception.txt").is_file()
-    )
+    exception_txt_exists = bool(trial_dir and (trial_dir / "exception.txt").is_file())
 
     agent_exec_stage = trial_res.get("agent_execution") or {}
     verifier_stage = trial_res.get("verifier") or {}

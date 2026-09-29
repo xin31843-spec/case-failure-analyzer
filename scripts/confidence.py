@@ -6,6 +6,7 @@ Computes calibrated heuristic evidence scores (`confidence`, `confidence_kind`,
 `evidence_strength`) from objective evidence counts, multi-source corroboration,
 and competing hypothesis separation rather than hardcoded gate constants.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple

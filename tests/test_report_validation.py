@@ -106,6 +106,100 @@ class TestGoldenCasesAndValidation(unittest.TestCase):
             self.assertEqual(an["primary_root_cause"]["category"], "unknown")
             self.assertEqual(an["primary_root_cause"]["code"], "UNKNOWN_INSUFFICIENT_EVIDENCE")
 
+    def test_validator_enforces_prestartup_infra_and_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir, task_dir = build_golden1_infra_docker_network(Path(tmp))
+            ev, an, rep = self._run_case(job_dir, task_dir)
+
+            # Golden 1 has fatal infra error and agent_started=False
+            # Mutating category to 'unknown' must fail PRESTARTUP_INFRA_VIOLATION
+            an_bad = dict(an)
+            an_bad["primary_root_cause"] = dict(an["primary_root_cause"])
+            an_bad["primary_root_cause"]["category"] = "unknown"
+            an_bad["competing_hypotheses"] = [
+                {
+                    "hypothesis_id": "H1",
+                    "category": "unknown",
+                    "evidence_for": ["err:INFRA_EXTERNAL_NETWORK"],
+                }
+            ]
+            ok, errors = validate_all(ev, an_bad, rep)
+            self.assertFalse(ok)
+            self.assertTrue(any("PRESTARTUP_INFRA_VIOLATION" in e for e in errors))
+
+            # Golden 7 has no fatal infra error and agent_started=False
+            # Mutating category to 'infra' must fail PRESTARTUP_UNKNOWN_VIOLATION
+            job_dir7, task_dir7 = build_golden7_unknown_missing_logs(Path(tmp) / "g7")
+            ev7, an7, rep7 = self._run_case(job_dir7, task_dir7)
+            an7_bad = dict(an7)
+            an7_bad["primary_root_cause"] = dict(an7["primary_root_cause"])
+            an7_bad["primary_root_cause"]["category"] = "infra"
+            an7_bad["competing_hypotheses"] = [
+                {
+                    "hypothesis_id": "H1",
+                    "category": "infra",
+                    "evidence_for": an7["evidence_refs"],
+                }
+            ]
+            ok7, errors7 = validate_all(ev7, an7_bad, rep7)
+            self.assertFalse(ok7)
+            self.assertTrue(any("PRESTARTUP_UNKNOWN_VIOLATION" in e for e in errors7))
+
+    def test_validator_enforces_verifier_crash_priority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir, task_dir = build_golden4_agent_scf_error_repeated_command(Path(tmp))
+            ev, an, rep = self._run_case(job_dir, task_dir)
+
+            # Inject a verifier internal crash into verifier_observations
+            ev_crash = dict(ev)
+            ev_crash["verifier_observations"] = list(ev.get("verifier_observations") or []) + [
+                {
+                    "obs_id": "ver:internal_crash",
+                    "type": "verifier_internal_crash",
+                    "summary": "Verifier crashed internally",
+                }
+            ]
+            # an has category='agent' -> must fail VERIFIER_CRASH_BLAME
+            ok, errors = validate_all(ev_crash, an, rep)
+            self.assertFalse(ok)
+            self.assertTrue(any("VERIFIER_CRASH_BLAME" in e for e in errors))
+
+    def test_validator_rejects_unbound_verifier_hazard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir, task_dir = build_golden5_verifier_regex_d_exponent(Path(tmp))
+            ev, an, rep = self._run_case(job_dir, task_dir)
+
+            # Add an unbound hazard observation
+            ev_haz = dict(ev)
+            ev_haz["verifier_observations"] = list(ev.get("verifier_observations") or []) + [
+                {
+                    "obs_id": "ver:unbound_hazard",
+                    "type": "parser_hazard",
+                    "hazard_detected": True,
+                    "triggered": False,
+                    "failure_binding": "none",
+                }
+            ]
+            an_haz = dict(an)
+            an_haz["evidence_refs"] = ["ver:unbound_hazard"]
+            an_haz["competing_hypotheses"] = [
+                {
+                    "hypothesis_id": "H1",
+                    "category": "verifier",
+                    "evidence_for": ["ver:unbound_hazard"],
+                }
+            ]
+            ok, errors = validate_all(ev_haz, an_haz, rep)
+            self.assertFalse(ok)
+            self.assertTrue(any("UNBOUND_VERIFIER_HAZARD" in e for e in errors))
+
+    def test_validator_without_report_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir, task_dir = build_golden1_infra_docker_network(Path(tmp))
+            ev, an, _ = self._run_case(job_dir, task_dir)
+            ok, errors = validate_all(ev, an, report_text=None)
+            self.assertTrue(ok, errors)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ repository - these modules are maintained by hand from here, and
 `tests/test_attribution_characterization.py` will show any behavior change as a
 reviewable baseline diff.
 """
+
 from __future__ import annotations
 
 from confidence import attach_confidence_metadata
@@ -15,7 +16,6 @@ from confidence import attach_confidence_metadata
 from typing import Any, Dict, Optional
 
 from ..context import AttributionContext
-
 
 
 def gate0_passed(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
