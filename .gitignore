@@ -2,7 +2,10 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
+*.egg-info/
 failure-analysis/
+
 
 # Generated analysis artifacts (never commit analyzer output)
 report.md

@@ -14,7 +14,7 @@ import ast
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from diagnostics import WARNING, make_diagnostic
 
@@ -313,7 +313,6 @@ def audit_contract(
 
     instruction_path = task_dir / "instruction.md" if task_dir else None
     verify_py_path = resolve_verifier_script_path(task_dir)
-    refs_json_path = task_dir / "tests" / "refs.json" if task_dir else None
 
     instruction_text = (
         instruction_path.read_text(encoding="utf-8", errors="replace")
@@ -322,6 +321,7 @@ def audit_contract(
     )
     prompt_info = extract_prompt_contract(instruction_text, task_dir)
     verifier_info = inspect_verifier_code(verify_py_path)
+    diagnostics: List[Dict[str, Any]] = list(verifier_info.get("diagnostics") or [])
 
     verify_log_text = ""
     if trial_dir:
@@ -598,7 +598,7 @@ def audit_contract(
         "verifier_contract": verifier_info,
         "contract_observations": contract_observations,
         "verifier_observations": verifier_observations,
-        "diagnostics": list((verifier_info or {}).get("diagnostics") or []),
+        "diagnostics": diagnostics,
     }
 
 

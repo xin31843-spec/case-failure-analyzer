@@ -255,7 +255,7 @@ def normalize_trajectory(
         # Map tool observations by source_call_id
         obs_by_call_id: Dict[str, str] = {}
         obs_block = step.get("observation") or {}
-        for r_idx, res_item in enumerate(obs_block.get("results") or []):
+        for res_item in (obs_block.get("results") or []):
             cid = res_item.get("source_call_id")
             content = res_item.get("content")
             if isinstance(content, list):

@@ -26,13 +26,11 @@ from confidence import attach_confidence_metadata
 def generate_candidate_hypotheses(evidence: Dict[str, Any]) -> Dict[str, Any]:
     runtime = evidence.get("runtime") or {}
     agent_started = bool(runtime.get("agent_started", False))
-    verifier_started = bool(runtime.get("verifier_started", False))
     errors = evidence.get("error_observations") or []
     contracts = evidence.get("contract_observations") or []
     verifier_obs = evidence.get("verifier_observations") or []
     sci_obs = evidence.get("scientific_observations") or []
     signals = evidence.get("behavioral_signals") or []
-    timeline = evidence.get("timeline") or []
 
     fail_log_obs = next((v for v in verifier_obs if v.get("obs_id") == "ver:fail_log"), None)
     fail_text = fail_log_obs.get("matched_text", "") if fail_log_obs else ""
