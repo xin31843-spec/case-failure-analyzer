@@ -32,23 +32,26 @@ For every failed trial:
 All causal attribution enforces a strict chronological dependency timeline:
 $$\text{Infra (pre-startup)} \longrightarrow \text{Case (assets/setup)} \longrightarrow \text{Verifier (crash/parser/tolerance)} \longrightarrow \text{Agent (positive deviation)}$$
 
-To implement this timeline deterministically, the engine evaluates gates in declared order:
-1. **Gate 1: Pre-Startup Infrastructure (`gate1_infra`)**: Fatal infra error when `agent_started == false` attributes to `infra`. Silent pre-startup failure without logs attributes to `unknown`.
-2. **Gate 2: Case Assets & Setup Defect (`gate2_case`)**: Missing prompt assets or broken container setup attributes to `case`.
-3. **Gate 3: Verifier Defect (`gate3_verifier`)**: Internal verifier crashes (`VERIFIER_RECOMPUTE_DEFECT`) or causally bound parser hazards (`failure_binding == "direct"`) attribute to `verifier`.
-4. **Gate 4: Numerical / Tolerance Defect (`gate4_numerical`)**: Structured numerical divergence with matching ensemble statistics and proven closed loop attributes to `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`).
-5. **Gate 5: Insufficient Evidence Check (`gate5_insufficient`)**: If required positive agent evidence is missing, abstains to `unknown` and prevents false agent blame.
-6. **Gate 6: Agent Primary Decision Error (`gate6_agent_primary`)**: Validates all 5 necessary gate conditions and positive behavioral signals before attributing to `agent`.
-7. **Gate 7: Unknown Fallback (`gate7_unknown`)**: Safe conservative fallback.
+To implement this timeline deterministically, the engine evaluates gates in declared order (the gate sequence `gate0`–`gate6`, 8 decision ids):
+1. **Gate 0: Passed Short-Circuit (`gate0_passed`)**: If the trial passed verification (`verification_status == "passed"` or `reward >= 1.0`), there is no failure to attribute; the engine short-circuits with `category = "none"` and never pollutes a passing trial with job-level errors.
+2. **Gate 1a: Pre-Startup Infrastructure (`gate1a_infra_prestartup`)**: Fatal infra error when `agent_started == false` attributes to `infra`.
+3. **Gate 1b: Pre-Startup Silent (`gate1b_unknown_no_evidence`)**: `agent_started == false` with no logs or errors explaining why attributes conservatively to `unknown`.
+4. **Gate 2: Case Assets & Setup Defect (`gate2_case_definition`)**: Missing prompt assets or broken container setup attributes to `case`.
+5. **Gate 3: Verifier Defect (`gate3_verifier_defect`)**: Internal verifier crashes (`VERIFIER_RECOMPUTE_DEFECT`) or causally bound parser hazards (`failure_binding == "direct"`) attribute to `verifier`.
+6. **Gate 4: Numerical / Tolerance Defect (`gate4_numerical_divergence`)**: Structured numerical divergence with matching ensemble statistics and proven closed loop attributes to `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`).
+7. **Gate 5: Insufficient Positive Evidence (`gate5_insufficient_positive_evidence`)**: If the trial failed but no positive agent evidence implicates Agent behaviour, abstains conservatively to `unknown` and prevents false agent blame (bare `reward == 0` or `FAIL` is not positive evidence). This is the conservative fallback before any Agent attribution.
+8. **Gate 6: Agent Primary Decision Error (`gate6_agent_primary`)**: Validates all 5 necessary gate conditions and positive behavioral signals before attributing to `agent`. This gate always matches, so it terminates the chain.
 
 | Precedence Stage | Gate | Scope / Trigger | Required Category | Forbidden Defaults |
 | :--- | :--- | :--- | :--- | :--- |
-| **Stage 1: Pre-Startup Infra** | Gate 1 | `agent_started == false` with fatal infra error | `infra` | Never `agent` |
-| **Stage 1b: Pre-Startup Silent**| Gate 1 | `agent_started == false` with no infra evidence | `unknown` | Never `agent` |
+| **Stage 0: Passed Trial** | Gate 0 | `verification_status == "passed"` or `reward >= 1.0` | `none` (no failure to attribute) | No failure attribution |
+| **Stage 1: Pre-Startup Infra** | Gate 1a | `agent_started == false` with fatal infra error | `infra` | Never `agent` |
+| **Stage 1b: Pre-Startup Silent**| Gate 1b | `agent_started == false` with no infra evidence | `unknown` | Never `agent` |
 | **Stage 2: Case Assets/Setup** | Gate 2 | Missing prompt assets or broken container setup | `case` | Never `agent` |
 | **Stage 3: Verifier Crash / Defect**| Gate 3 | Internal verifier crash or direct-bound parser defect | `verifier` | Never `agent` or `unknown` (isolated crash) |
 | **Stage 4: Numerical Tolerance** | Gate 4 | Instantaneous trajectory drift with matching ensemble | `verifier` (if verified) | Never `agent` (abstain to `unknown` if unproven)|
-| **Stage 5: Agent Decision** | Gate 6 | Positive agent behavioral/trajectory error | `agent` | Never assign without positive evidence |
+| **Stage 5: Insufficient Evidence** | Gate 5 | Failed trial with no positive agent evidence | `unknown` | Never `agent` without positive evidence |
+| **Stage 6: Agent Decision** | Gate 6 | Positive agent behavioral/trajectory error | `agent` | Never assign without positive evidence |
 
 ### Necessary Gate Conditions for Blaming the Agent
 

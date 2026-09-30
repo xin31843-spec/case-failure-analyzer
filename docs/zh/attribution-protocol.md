@@ -33,23 +33,26 @@
 所有因果归因严格遵循客观时序与依赖链：
 $$\text{Infra (启动前环境)} \longrightarrow \text{Case (题目资产/配置)} \longrightarrow \text{Verifier (评测器崩溃/解析/容差)} \longrightarrow \text{Agent (正向偏离动作)}$$
 
-为在代码中确定性实现该时序，引擎按以下严格声明顺序依次求值各个 Gate：
-1. **Gate 1: 启动前环境基础设施 (`gate1_infra`)**：若 `agent_started == false` 且存在致命基础设施故障证据，归因为 `infra`；若无日志则归因为 `unknown`。
-2. **Gate 2: 题目资产与配置缺陷 (`gate2_case`)**：题目要求资产缺失或镜像损坏，归因为 `case`。
-3. **Gate 3: 评测器缺陷 (`gate3_verifier`)**：评测器自身内部崩溃（`VERIFIER_RECOMPUTE_DEFECT`）或完成直接因果绑定的解析正则缺陷（`failure_binding == "direct"`），归因为 `verifier`。
-4. **Gate 4: 数值漂移与容差缺陷 (`gate4_numerical`)**：结构化瞬时轨迹发散但系综均值守恒吻合、且三方契约闭环成立时，归因为 `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`)。
-5. **Gate 5: 充分性与证据不足门控 (`gate5_insufficient`)**：若缺乏将责任归因于 Agent 的正面因果证据，保守弃判并退化至 `unknown`，防止误怪 Agent。
-6. **Gate 6: Agent 主观决策与操作错误 (`gate6_agent_primary`)**：在满足 5 项必要条件且具备正面行为信号时归因为 `agent`。
-7. **Gate 7: 未知兜底 (`gate7_unknown`)**：兜底保守弃判。
+为在代码中确定性实现该时序，引擎按声明顺序（gate0–gate6 共 8 个决策 id）依次求值各个 Gate：
+1. **Gate 0: 通过短路门 (`gate0_passed`)**：若 Trial 已通过验证（`verification_status == "passed"` 或 `reward >= 1.0`），则不存在需要归因的失败；引擎以 `category = "none"` 短路返回，绝不因 Job 级错误统计污染已通过的 Trial。
+2. **Gate 1a: 启动前环境基础设施 (`gate1a_infra_prestartup`)**：`agent_started == false` 且存在致命基础设施故障证据时，归因为 `infra`。
+3. **Gate 1b: 启动前静默 (`gate1b_unknown_no_evidence`)**：`agent_started == false` 且无任何日志或错误可解释原因时，保守归因为 `unknown`。
+4. **Gate 2: 题目资产与配置缺陷 (`gate2_case_definition`)**：题目要求资产缺失或镜像配置损坏，归因为 `case`。
+5. **Gate 3: 评测器缺陷 (`gate3_verifier_defect`)**：评测器自身内部崩溃（`VERIFIER_RECOMPUTE_DEFECT`）或完成直接因果绑定的解析正则缺陷（`failure_binding == "direct"`），归因为 `verifier`。
+6. **Gate 4: 数值漂移与容差缺陷 (`gate4_numerical_divergence`)**：结构化瞬时轨迹发散但系综均值守恒吻合、且三方契约闭环成立时，归因为 `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`)。
+7. **Gate 5: 正面证据不足门控 (`gate5_insufficient_positive_evidence`)**：若 Trial 失败但缺乏指向 Agent 行为的正面因果证据，保守弃判并退化至 `unknown`，防止误怪 Agent（仅有 `reward == 0` 或 `verify.log` 中的 `FAIL` 不构成正面证据）。这是 Agent 归因前的保守兜底。
+8. **Gate 6: Agent 主观决策与操作错误 (`gate6_agent_primary`)**：在满足 5 项必要条件且具备正面行为信号时归因为 `agent`。该 Gate 必然命中，从而终结整条判定链。
 
 | 阶段顺序 | 对应门控 | 适用范围 / 触发条件 | 归因类别 | 绝对禁止项 |
 | :--- | :--- | :--- | :--- | :--- |
-| **阶段 1: 启动前环境** | Gate 1 | `agent_started == false` 且存在致命基础设施错误 | `infra` | 严禁归因 `agent` |
-| **阶段 1b: 启动前静默**| Gate 1 | `agent_started == false` 且无任何异常日志证据 | `unknown` | 严禁归因 `agent` |
+| **阶段 0: Trial 已通过** | Gate 0 | `verification_status == "passed"` 或 `reward >= 1.0` | `none`（无失败可归因） | 无失败归因 |
+| **阶段 1: 启动前环境** | Gate 1a | `agent_started == false` 且存在致命基础设施错误 | `infra` | 严禁归因 `agent` |
+| **阶段 1b: 启动前静默**| Gate 1b | `agent_started == false` 且无任何异常日志证据 | `unknown` | 严禁归因 `agent` |
 | **阶段 2: 题目资产配置** | Gate 2 | 缺失 Prompt 资产文件或题目镜像配置损坏 | `case` | 严禁归因 `agent` |
 | **阶段 3: 评测器崩溃/解析**| Gate 3 | 评测器内部崩溃或直接绑定的解析器缺陷 | `verifier` | 严禁归因 `agent` 或判为 `unknown` |
 | **阶段 4: 数值容差缺陷** | Gate 4 | 瞬时轨迹发散但系综统计量吻合且闭环成立 | `verifier` | 严禁未经验证归因 `agent`（不完备时弃判）|
-| **阶段 5: Agent 决策偏离** | Gate 6 | Agent 正向行为偏离/轨迹操作错误 | `agent` | 严禁无正面证据直接推定 Agent 责任 |
+| **阶段 5: 证据不足** | Gate 5 | Trial 失败且无指向 Agent 的正面证据 | `unknown` | 严禁无正面证据归因 `agent` |
+| **阶段 6: Agent 决策偏离** | Gate 6 | Agent 正向行为偏离/轨迹操作错误 | `agent` | 严禁无正面证据直接推定 Agent 责任 |
 
 ### 归因 Agent 的五大必要条件与硬规则 (`Necessary Gate Conditions for Blaming the Agent`)
 
