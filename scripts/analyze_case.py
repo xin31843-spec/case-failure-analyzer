@@ -22,6 +22,7 @@ import os
 import shutil
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -336,15 +337,34 @@ def _validate_input_output_isolation(
                     _assert_no_overlap(f_path, f"output symlink '{f_path.relative_to(out_dir)}'")
 
 
+def _is_safe_manifest_relpath(rel_str: Any, out_dir: Path) -> bool:
+    """Validate that rel_str is a safe relative path strictly contained inside out_dir."""
+    if not isinstance(rel_str, str) or not rel_str.strip():
+        return False
+    cleaned = rel_str.strip()
+    p = Path(cleaned)
+    if p.is_absolute() or ".." in p.parts:
+        return False
+    try:
+        resolved_out = out_dir.resolve()
+        resolved_target = (out_dir / p).resolve()
+        resolved_target.relative_to(resolved_out)
+        return True
+    except (ValueError, RuntimeError):
+        return False
+
+
 def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial: bool) -> None:
-    """Transactionally publish staging directory contents into out_dir with rollback.
+    """Publish staging directory contents into out_dir with atomic file replacement and best-effort rollback.
 
     Guarantees:
-    1. Only managed artifacts recorded in .cfa_manifest.json (or known legacy artifacts) are cleaned.
-    2. User-authored files and subdirectories are strictly preserved.
-    3. Rollback guarantee: If any error occurs during cleanup or file copying, out_dir is
-       completely restored to its pre-publish state, ensuring readers only observe a complete
-       old version or a complete new version.
+    1. Only managed artifacts recorded in a valid .cfa_manifest.json are cleaned.
+    2. Without a previous manifest, pre-existing files (e.g. user report.md) are strictly preserved.
+    3. Manifest paths with '..' or escaping out_dir are rejected and never deleted or written.
+    4. Each file is written via a hidden temporary file and atomically replaced (os.replace)
+       so readers never observe partially written files.
+    5. Best-effort rollback: If an error occurs, out_dir is rolled back to its pre-publish state;
+       any secondary I/O errors during rollback are captured without masking the primary exception.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -365,26 +385,39 @@ def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial:
     )
     staged_rel_paths.append(MANIFEST_FILENAME)
 
-    # 2. Determine previous managed artifacts in out_dir
+    # 2. Determine previous managed artifacts in out_dir from a verified manifest only
     old_manifest_path = out_dir / MANIFEST_FILENAME
     old_managed_files: Set[str] = set()
     old_managed_dirs: Set[str] = set()
+    has_valid_old_manifest = False
 
     if old_manifest_path.is_file():
         try:
             old_manifest = json.loads(old_manifest_path.read_text(encoding="utf-8"))
-            old_managed_files = set(old_manifest.get("managed_files") or [])
-            old_managed_dirs = set(old_manifest.get("managed_dirs") or [])
+            if (
+                isinstance(old_manifest, dict)
+                and old_manifest.get("schema_version") == "cfa-manifest-v1"
+            ):
+                raw_files = old_manifest.get("managed_files") or []
+                raw_dirs = old_manifest.get("managed_dirs") or []
+                if isinstance(raw_files, list) and isinstance(raw_dirs, list):
+                    for f in raw_files:
+                        if _is_safe_manifest_relpath(f, out_dir):
+                            old_managed_files.add(str(Path(f)))
+                    for d in raw_dirs:
+                        if _is_safe_manifest_relpath(d, out_dir):
+                            old_managed_dirs.add(str(Path(d)))
+                    has_valid_old_manifest = True
         except Exception:
             pass
 
-    if not old_managed_files:
-        # Legacy fallback: only clean known root trial/summary files
-        for fname in KNOWN_TRIAL_ARTIFACTS | KNOWN_ROOT_ARTIFACTS:
-            if (out_dir / fname).is_file():
-                old_managed_files.add(fname)
+    # If no valid previous manifest exists, CFA assumes ownership of ZERO pre-existing files!
+    # Unmanaged files and directories (user notes, reports, data) are NEVER deleted.
+    if not has_valid_old_manifest:
+        old_managed_files = set()
+        old_managed_dirs = set()
 
-    # Managed files to remove (existed previously, not in new staged files)
+    # Managed files to remove (existed previously in manifest, not in new staged files)
     files_to_remove = old_managed_files - set(staged_rel_paths)
 
     # 3. Create transactional backup of all files in out_dir that will be deleted or overwritten
@@ -395,6 +428,8 @@ def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial:
     try:
         # Back up existing files that will be touched
         for rel_str in files_to_remove | (old_managed_files & set(staged_rel_paths)):
+            if not _is_safe_manifest_relpath(rel_str, out_dir):
+                continue
             target = out_dir / rel_str
             if target.is_file():
                 b_path = backup_dir / rel_str
@@ -402,14 +437,38 @@ def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial:
                 shutil.copy2(target, b_path)
                 backed_up_items[rel_str] = b_path
 
-        # Step A: Delete stale managed files
+        # Step A: Atomically write and replace all staged files into out_dir
+        # By putting new files in place first, readers never see missing files before replacement
+        for rel_str in staged_rel_paths:
+            if not _is_safe_manifest_relpath(rel_str, out_dir):
+                continue
+            src = staging_dir / rel_str
+            dest = out_dir / rel_str
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp_dest = dest.parent / f".{dest.name}.cfa_tmp_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+            try:
+                shutil.copy2(src, tmp_dest)
+                os.replace(tmp_dest, dest)
+            except Exception:
+                if tmp_dest.is_file() or tmp_dest.is_symlink():
+                    try:
+                        tmp_dest.unlink()
+                    except OSError:
+                        pass
+                raise
+
+        # Step B: Delete stale managed files (now that new versions are fully in place)
         for rel_str in files_to_remove:
+            if not _is_safe_manifest_relpath(rel_str, out_dir):
+                continue
             target = out_dir / rel_str
-            if target.is_file():
+            if target.is_file() or target.is_symlink():
                 target.unlink()
 
-        # Step B: Clean old managed trial directories if empty
+        # Step C: Clean old managed trial directories if empty
         for d_name in old_managed_dirs - set(staged_dirs):
+            if not _is_safe_manifest_relpath(d_name, out_dir):
+                continue
             d_path = out_dir / d_name
             if d_path.is_dir():
                 try:
@@ -417,37 +476,51 @@ def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial:
                 except OSError:
                     pass  # Keep if user files exist
 
-        # Step C: Copy all staged files into out_dir
-        for rel_str in staged_rel_paths:
-            src = staging_dir / rel_str
-            dest = out_dir / rel_str
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
-
-    except Exception:
-        # ROLLBACK: Restore out_dir to exact pre-publish state
-        current_files = {str(p.relative_to(out_dir)) for p in out_dir.rglob("*") if p.is_file()}
-        # 1. Remove newly created files
-        for newly_created in current_files - pre_publish_files:
-            try:
-                (out_dir / newly_created).unlink()
-            except OSError:
-                pass
-        # 2. Restore all backed up files
-        for rel_str, b_path in backed_up_items.items():
-            dest = out_dir / rel_str
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(b_path, dest)
-        # 3. Clean any empty dirs created during the failed attempt
-        for rel_str in staged_rel_paths:
-            parent = (out_dir / rel_str).parent
-            while parent != out_dir and parent.is_dir():
+    except Exception as primary_exc:
+        # ROLLBACK: Best-effort restore of out_dir to exact pre-publish state
+        rollback_errors: List[Exception] = []
+        try:
+            current_files = {str(p.relative_to(out_dir)) for p in out_dir.rglob("*") if p.is_file()}
+            # 1. Remove newly created files
+            for newly_created in current_files - pre_publish_files:
                 try:
-                    parent.rmdir()
-                    parent = parent.parent
-                except OSError:
-                    break
-        raise
+                    p = out_dir / newly_created
+                    if p.is_file() or p.is_symlink():
+                        p.unlink()
+                except Exception as e:
+                    rollback_errors.append(e)
+
+            # 2. Restore all backed up files using atomic replace
+            for rel_str, b_path in backed_up_items.items():
+                try:
+                    dest = out_dir / rel_str
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    tmp_restore = (
+                        dest.parent / f".{dest.name}.restore_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+                    )
+                    shutil.copy2(b_path, tmp_restore)
+                    os.replace(tmp_restore, dest)
+                except Exception as e:
+                    rollback_errors.append(e)
+
+            # 3. Clean any empty dirs created during failed attempt
+            for rel_str in staged_rel_paths:
+                parent = (out_dir / rel_str).parent
+                while parent != out_dir and parent.is_dir():
+                    try:
+                        parent.rmdir()
+                        parent = parent.parent
+                    except OSError:
+                        break
+        except Exception as e:
+            rollback_errors.append(e)
+
+        if rollback_errors:
+            print(
+                f"WARNING: Rollback encountered secondary I/O errors: {rollback_errors[0]}",
+                file=sys.stderr,
+            )
+        raise primary_exc
     finally:
         shutil.rmtree(backup_dir, ignore_errors=True)
 

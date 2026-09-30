@@ -742,8 +742,72 @@ class TestReportRegressionFindings(unittest.TestCase):
             disc = discover_all(job_path=job_dir, task_path=task_dir)
             ev, an, rep, _ = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
             self.assertNotEqual(an["primary_root_cause"]["code"], "VERIFIER_TOLERANCE_TOO_STRICT")
+
+    def test_25_numerical_divergence_abstains_when_verifier_only_has_trajectory_in_assert_msg(
+        self,
+    ) -> None:
+        """P1: Verifier mentioning trajectory_rmsd only in assert message must not trigger numerical defect."""
+        from tests.archetype_builders import build_golden6_numerical_md_trajectory_divergence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_dir, task_dir = build_golden6_numerical_md_trajectory_divergence(root)
+            # Replace verify.py code: output_exists condition, trajectory_rmsd is ONLY in error message!
+            (task_dir / "tests" / "verify.py").write_text(
+                "output_exists = False\n"
+                "assert output_exists, 'trajectory_rmsd=0.45 exceeds 0.01 tolerance'\n",
+                encoding="utf-8",
+            )
+
+            disc = discover_all(job_path=job_dir, task_path=task_dir)
+            ev, an, rep, _ = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
+            self.assertNotEqual(an["primary_root_cause"]["code"], "VERIFIER_TOLERANCE_TOO_STRICT")
             self.assertEqual(an["primary_root_cause"]["category"], "unknown")
             self.assertEqual(an["primary_root_cause"]["code"], "UNKNOWN_INSUFFICIENT_EVIDENCE")
+
+    def test_26_verifier_ast_visitor_ignores_error_strings_and_membership(self) -> None:
+        """P1: Unit tests for VerifierASTVisitor condition vs message separation and operator filtering."""
+        import ast
+        from audit_contract import VerifierASTVisitor
+
+        # 1. Assert message string must NOT trigger trajectory assertion
+        code1 = "assert file_exists, 'trajectory_rmsd exceeded threshold'"
+        v1 = VerifierASTVisitor()
+        v1.visit(ast.parse(code1))
+        self.assertFalse(v1.has_instantaneous_trajectory_assertion)
+
+        # 2. String membership check ("..." in log) must NOT trigger trajectory assertion
+        code2 = "if 'trajectory_rmsd' in log_output:\n    pass"
+        v2 = VerifierASTVisitor()
+        v2.visit(ast.parse(code2))
+        self.assertFalse(v2.has_instantaneous_trajectory_assertion)
+
+        # 3. Method call error message argument must NOT trigger
+        code3 = (
+            "self.assertTrue(is_valid, msg='trajectory_rmsd is too large')\n"
+            "self.assertEqual(status, 'OK', 'trajectory_rmsd was bad')\n"
+        )
+        v3 = VerifierASTVisitor()
+        v3.visit(ast.parse(code3))
+        self.assertFalse(v3.has_instantaneous_trajectory_assertion)
+
+        # 4. Actual trajectory comparison in condition MUST trigger
+        code4 = "assert trajectory_rmsd < 0.05"
+        v4 = VerifierASTVisitor()
+        v4.visit(ast.parse(code4))
+        self.assertTrue(v4.has_instantaneous_trajectory_assertion)
+
+        # 5. Attribute in comparison MUST trigger
+        code5 = "assert self.coord_rmsd < 0.1"
+        v5 = VerifierASTVisitor()
+        v5.visit(ast.parse(code5))
+        self.assertTrue(v5.has_instantaneous_trajectory_assertion)
+
+        # 6. assertAlmostEqual comparison argument MUST trigger
+        code6 = "self.assertAlmostEqual(trajectory_rmsd, 0.0, places=2)"
+        v6 = VerifierASTVisitor()
+        v6.visit(ast.parse(code6))
+        self.assertTrue(v6.has_instantaneous_trajectory_assertion)
 
 
 if __name__ == "__main__":

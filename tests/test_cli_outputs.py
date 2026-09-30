@@ -12,7 +12,9 @@ multi-trial branch in `main()` was entirely untested.
 
 from __future__ import annotations
 
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -374,7 +376,7 @@ class TestLifecycleAndRerun(unittest.TestCase):
         def fail_on_second_copy(src, dst):
             nonlocal call_count
             call_count += 1
-            if call_count >= 2:
+            if call_count == 2:
                 raise OSError("Simulated disk error during publish")
             return original_copy2(src, dst)
 
@@ -385,6 +387,138 @@ class TestLifecycleAndRerun(unittest.TestCase):
         # Rollback check: out must be restored to its exact pre-publish state
         self.assertEqual(initial_file.read_text(encoding="utf-8"), "INITIAL_REPORT_V1")
         self.assertFalse((out / "analysis.json").exists())
+
+    def test_manifest_path_traversal_does_not_delete_outside_files(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+        victim_sibling = tmp / "victim.txt"
+        victim_sibling.write_text("precious data", encoding="utf-8")
+
+        # Malicious manifest trying path traversal outside out_dir
+        malicious_manifest = out / ".cfa_manifest.json"
+        malicious_manifest.write_text(
+            json.dumps(
+                {
+                    "schema_version": "cfa-manifest-v1",
+                    "layout": "single",
+                    "managed_files": [
+                        "../victim.txt",
+                        "../../victim.txt",
+                        "/tmp/victim.txt",
+                        "report.md",
+                    ],
+                    "managed_dirs": ["../victim_dir", "/tmp/victim_dir"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        proc = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--output",
+            str(out),
+            "--trial",
+            "trial_b_pass",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        # Outside file must remain untouched despite malicious manifest entries
+        self.assertTrue(victim_sibling.is_file())
+        self.assertEqual(victim_sibling.read_text(encoding="utf-8"), "precious data")
+
+    def test_no_manifest_does_not_delete_existing_user_files(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+        user_report = out / "report.md"
+        user_report.write_text("# User Pre-existing Report\nDo not delete!", encoding="utf-8")
+
+        # Run CLI with format json on a fresh dir without .cfa_manifest.json
+        proc = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--output",
+            str(out),
+            "--trial",
+            "trial_b_pass",
+            "--format",
+            "json",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # Pre-existing user report must NOT be deleted
+        self.assertTrue(user_report.is_file())
+        self.assertEqual(
+            user_report.read_text(encoding="utf-8"), "# User Pre-existing Report\nDo not delete!"
+        )
+        self.assertTrue((out / "evidence.json").is_file())
+
+    def test_atomic_replacement_via_temp_files(self) -> None:
+        from unittest.mock import patch
+
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from analyze_case import _publish_staging_to_output
+
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+        staging = Path(tempfile.mkdtemp())
+        (staging / "report.md").write_text("STAGED CONTENT", encoding="utf-8")
+
+        replaced_destinations = []
+        original_replace = os.replace
+
+        def track_replace(src, dst):
+            replaced_destinations.append((Path(src).name, Path(dst).name))
+            return original_replace(src, dst)
+
+        with patch("os.replace", side_effect=track_replace):
+            _publish_staging_to_output(staging, out, is_multi_trial=False)
+
+        self.assertTrue(any(dst == "report.md" for src, dst in replaced_destinations))
+        self.assertTrue(
+            any(src.startswith(".report.md.cfa_tmp_") for src, dst in replaced_destinations)
+        )
+        self.assertEqual((out / "report.md").read_text(encoding="utf-8"), "STAGED CONTENT")
+
+    def test_rollback_catches_secondary_io_errors_and_reraises_primary(self) -> None:
+        from unittest.mock import patch
+
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from analyze_case import _publish_staging_to_output
+
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+        (out / "existing.txt").write_text("PRE-EXISTING", encoding="utf-8")
+        manifest = out / ".cfa_manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema_version": "cfa-manifest-v1",
+                    "layout": "single",
+                    "managed_files": ["existing.txt", ".cfa_manifest.json"],
+                    "managed_dirs": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        staging = Path(tempfile.mkdtemp())
+        (staging / "existing.txt").write_text("NEW_CONTENT", encoding="utf-8")
+
+        def fail_replace(src, dst):
+            raise OSError("Primary replacement failed")
+
+        with patch("os.replace", side_effect=fail_replace):
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                with self.assertRaises(OSError) as cm:
+                    _publish_staging_to_output(staging, out, is_multi_trial=False)
+                self.assertIn("Primary replacement failed", str(cm.exception))
+                self.assertIn(
+                    "WARNING: Rollback encountered secondary I/O errors", mock_stderr.getvalue()
+                )
 
 
 if __name__ == "__main__":

@@ -139,26 +139,37 @@ class VerifierASTVisitor(ast.NodeVisitor):
         if "." in Path(cleaned).name and cleaned not in self.checked_files:
             self.checked_files.append(cleaned)
 
-    def visit_Assert(self, node: ast.Assert) -> Any:
-        for child in ast.walk(node):
+    def _inspect_test_expression(self, expr: Optional[ast.AST]) -> None:
+        """Inspect condition or compared expression for trajectory keywords, strictly excluding error messages."""
+        if expr is None:
+            return
+        for child in ast.walk(expr):
             if isinstance(child, ast.Name) and TRAJECTORY_KEYWORD_RE.search(child.id):
                 self.has_instantaneous_trajectory_assertion = True
             elif isinstance(child, ast.Attribute) and TRAJECTORY_KEYWORD_RE.search(child.attr):
                 self.has_instantaneous_trajectory_assertion = True
             elif (
-                isinstance(child, ast.Constant)
-                and isinstance(child.value, str)
-                and TRAJECTORY_KEYWORD_RE.search(child.value)
+                isinstance(child, ast.Subscript)
+                and isinstance(child.slice, ast.Constant)
+                and isinstance(child.slice.value, str)
+                and TRAJECTORY_KEYWORD_RE.search(child.slice.value)
             ):
                 self.has_instantaneous_trajectory_assertion = True
+
+    def visit_Assert(self, node: ast.Assert) -> Any:
+        # Strictly inspect ONLY node.test!
+        # node.msg (e.g. `assert output_exists, "trajectory_rmsd=0.45"`) is only an error message
+        # and must never be treated as evaluating a numerical trajectory rule.
+        self._inspect_test_expression(node.test)
         self.generic_visit(node)
 
     def visit_Compare(self, node: ast.Compare) -> Any:
-        for child in ast.walk(node):
-            if isinstance(child, ast.Name) and TRAJECTORY_KEYWORD_RE.search(child.id):
-                self.has_instantaneous_trajectory_assertion = True
-            elif isinstance(child, ast.Attribute) and TRAJECTORY_KEYWORD_RE.search(child.attr):
-                self.has_instantaneous_trajectory_assertion = True
+        # Exclude membership tests (e.g. `"trajectory_rmsd" in log_text`), which are text checks
+        is_membership = any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops)
+        if not is_membership:
+            self._inspect_test_expression(node.left)
+            for comparator in node.comparators:
+                self._inspect_test_expression(comparator)
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
@@ -171,20 +182,25 @@ class VerifierASTVisitor(ast.NodeVisitor):
         if TRAJECTORY_KEYWORD_RE.search(func_name):
             self.has_instantaneous_trajectory_assertion = True
         elif func_name in (
-            "check",
-            "fail",
             "assertEqual",
-            "assertTrue",
+            "assertAlmostEqual",
             "assert_allclose",
+            "assert_array_almost_equal",
+            "assert_array_less",
             "isclose",
+            "allclose",
             "assertLess",
             "assertGreater",
+            "assert_less",
+            "assert_greater",
         ):
-            for child in ast.walk(node):
-                if isinstance(child, ast.Name) and TRAJECTORY_KEYWORD_RE.search(child.id):
-                    self.has_instantaneous_trajectory_assertion = True
-                elif isinstance(child, ast.Attribute) and TRAJECTORY_KEYWORD_RE.search(child.attr):
-                    self.has_instantaneous_trajectory_assertion = True
+            # Inspect only the compared values (positional args 0 and 1), NEVER msg or err_msg keywords
+            for arg in node.args[:2]:
+                self._inspect_test_expression(arg)
+        elif func_name in ("check", "assertTrue"):
+            # Condition is the first argument
+            if node.args:
+                self._inspect_test_expression(node.args[0])
 
         if func_name == "join" and len(node.args) >= 2:
             first_arg = node.args[0]
