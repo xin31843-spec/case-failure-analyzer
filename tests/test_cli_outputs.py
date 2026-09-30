@@ -663,6 +663,64 @@ class TestLifecycleAndRerun(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("not a directory", proc.stderr)
 
+    def test_is_safe_manifest_relpath_rejects_identity_paths(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from analyze_case import _is_safe_manifest_relpath
+
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+
+        self.assertFalse(_is_safe_manifest_relpath(".", out))
+        self.assertFalse(_is_safe_manifest_relpath("./", out))
+        self.assertFalse(_is_safe_manifest_relpath("..", out))
+        self.assertFalse(_is_safe_manifest_relpath("", out))
+        self.assertTrue(_is_safe_manifest_relpath("report.md", out))
+
+    def test_rollback_restores_preexisting_file_without_manifest(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from analyze_case import _publish_staging_to_output
+        from unittest.mock import patch
+
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+
+        # Pre-existing file without manifest
+        user_file = out / "report.md"
+        user_file.write_text("ORIGINAL_USER_CONTENT", encoding="utf-8")
+
+        staging = Path(tempfile.mkdtemp())
+        (staging / "report.md").write_text("NEW_CONTENT", encoding="utf-8")
+        (staging / "second_file.txt").write_text("SECOND_NEW", encoding="utf-8")
+
+        real_replace = os.replace
+
+        def failing_replace(src, dst):
+            if "second_file" in str(dst):
+                raise OSError("Disk full during publish")
+            return real_replace(src, dst)
+
+        with patch("os.replace", side_effect=failing_replace):
+            with self.assertRaises(OSError):
+                _publish_staging_to_output(staging, out, is_multi_trial=False)
+
+        # Rollback must restore original content!
+        self.assertEqual(user_file.read_text(encoding="utf-8"), "ORIGINAL_USER_CONTENT")
+        # Newly created files must not be present
+        self.assertFalse((out / "second_file.txt").exists())
+
+    def test_causally_bound_numerical_failure_namespaced_assertion(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from audit_contract import is_causally_bound_numerical_failure
+
+        log = (
+            "FAILED tests/test_md.py::test_run\n"
+            "E   numpy.testing._private.utils.AssertionError:\n"
+            "E   trajectory_rmsd = 0.45 > 0.05 tolerance\n"
+        )
+        self.assertTrue(is_causally_bound_numerical_failure(log))
+
 
 if __name__ == "__main__":
     unittest.main()

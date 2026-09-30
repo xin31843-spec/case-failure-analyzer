@@ -238,17 +238,6 @@ KNOWN_TRIAL_ARTIFACTS = {
 KNOWN_ROOT_ARTIFACTS = {"job_summary.json"}
 
 
-def _clean_managed_trial_dir(target_dir: Path, allowed_files: Set[str]) -> None:
-    """Remove known managed trial files in target_dir that are not in allowed_files."""
-    if not target_dir.is_dir():
-        return
-    for fname in KNOWN_TRIAL_ARTIFACTS:
-        if fname not in allowed_files:
-            fpath = target_dir / fname
-            if fpath.is_file():
-                fpath.unlink()
-
-
 MANIFEST_FILENAME = ".cfa_manifest.json"
 
 
@@ -351,6 +340,8 @@ def _is_safe_manifest_relpath(rel_str: Any, out_dir: Path) -> bool:
     try:
         resolved_out = out_dir.resolve()
         resolved_target = (out_dir / p).resolve()
+        if resolved_target == resolved_out:
+            return False
         resolved_target.relative_to(resolved_out)
         return True
     except (ValueError, RuntimeError):
@@ -519,8 +510,11 @@ def _publish_staging_to_output_locked(
     pre_publish_files = {str(p.relative_to(out_dir)) for p in out_dir.rglob("*") if p.is_file()}
 
     try:
-        # Back up existing files that will be touched
-        for rel_str in files_to_remove | (old_managed_files & set(staged_rel_paths)):
+        # Back up existing files that will be touched or deleted
+        files_to_backup = files_to_remove | {
+            rel_str for rel_str in staged_rel_paths if (out_dir / rel_str).is_file()
+        }
+        for rel_str in files_to_backup:
             if not _is_safe_manifest_relpath(rel_str, out_dir):
                 continue
             target = out_dir / rel_str
@@ -585,16 +579,22 @@ def _publish_staging_to_output_locked(
 
             # 2. Restore all backed up files using atomic replace
             for rel_str, b_path in backed_up_items.items():
+                dest = out_dir / rel_str
+                tmp_restore = (
+                    dest.parent / f".{dest.name}.restore_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+                )
                 try:
-                    dest = out_dir / rel_str
                     dest.parent.mkdir(parents=True, exist_ok=True)
-                    tmp_restore = (
-                        dest.parent / f".{dest.name}.restore_{os.getpid()}_{uuid.uuid4().hex[:8]}"
-                    )
                     shutil.copy2(b_path, tmp_restore)
                     os.replace(tmp_restore, dest)
                 except Exception as e:
                     rollback_errors.append(e)
+                finally:
+                    if tmp_restore.is_file() or tmp_restore.is_symlink():
+                        try:
+                            tmp_restore.unlink()
+                        except OSError:
+                            pass
 
             # 3. Clean any empty dirs created during failed attempt
             for rel_str in staged_rel_paths:

@@ -436,7 +436,7 @@ def is_causally_bound_numerical_failure(verify_log_text: str) -> bool:
     for i, raw_line in enumerate(lines):
         clean_line = re.sub(r"^[E>+]\s+", "", raw_line.strip()).strip()
         if re.search(
-            r"^(?:FAIL\b|AssertionError\b|FAILED\b)|(?:^assert\s+)",
+            r"^(?:FAIL\b|FAILED\b|(?:[\w.]+\.)?AssertionError\b)|(?:^assert\s+)",
             clean_line,
             re.IGNORECASE,
         ):
