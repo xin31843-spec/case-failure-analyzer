@@ -844,6 +844,38 @@ class TestReportRegressionFindings(unittest.TestCase):
         log4 = "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 (ensemble average matches)"
         self.assertTrue(is_causally_bound_numerical_failure(log4))
 
+    def test_28_causally_bound_numerical_failure_multiline_blocks(self) -> None:
+        """P1: Multi-line pytest and structured error messages must be causally bound to numerical defects."""
+        from audit_contract import is_causally_bound_numerical_failure
+
+        # 1. Multi-line pytest traceback with E / > markers and where clause
+        log_pytest = (
+            "________________ test_md_trajectory ________________\n"
+            ">       assert trajectory_rmsd < 0.01\n"
+            "E       AssertionError: assert 0.45 < 0.01\n"
+            "E        +  where 0.45 = trajectory_rmsd\n"
+            "ensemble average matches reference\n"
+        )
+        self.assertTrue(is_causally_bound_numerical_failure(log_pytest))
+
+        # 2. Multi-line structured error report
+        log_structured = (
+            "AssertionError: Instantaneous coordinate threshold exceeded!\n"
+            "  calculated: 0.45\n"
+            "  threshold: 0.01\n"
+            "conserved quantity matches baseline\n"
+        )
+        self.assertTrue(is_causally_bound_numerical_failure(log_structured))
+
+        # 3. Multi-line failure that is actually a missing file must NOT bind
+        log_missing = (
+            "________________ test_md_trajectory ________________\n"
+            ">       assert os.path.exists(output_file)\n"
+            "E       AssertionError: FileNotFoundError: output.xyz not found\n"
+            "ensemble average matches reference\n"
+        )
+        self.assertFalse(is_causally_bound_numerical_failure(log_missing))
+
 
 if __name__ == "__main__":
     unittest.main()

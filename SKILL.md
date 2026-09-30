@@ -45,7 +45,7 @@ Require or discover:
 - Supported trajectory schemas: `ATIF-v1.7` (primary), plus `ATIF-v1.6` / `ATIF-v1.5`.
 - Output schema version: `failure-analysis-v1` (see `references/evidence-schema.md` and `references/report-schema.md`).
 - Bilingual output is mandatory for `--phase all`: `report.md`, `report.zh.md`, `report.en.md`, and `skill-prescription.md` only when eligible.
-- Invalid inputs (missing `--job` or `--output`, non-existent `--job`/`--task`, unknown `--trial`, path overlap between `--output` and `--job`/`--task`, empty job tree without job-level evidence) exit with code `2` and write nothing.
+- Invalid inputs (missing `--job` or `--output`, non-existent or non-directory `--job`/`--task`, non-writable or file `--output`, unknown `--trial`, path overlap between `--output` and `--job`/`--task`, empty job tree without job-level evidence) exit with code `2` with structured error messages and write nothing.
 - `analysis.json` carries an optional `decision_trace` recording which gate was evaluated, why each abstained, and which one was selected. It is additive and never required: a hand-authored or model-written `analysis.json` validates without one.
 - `evidence.json` carries an optional `diagnostics` list recording any recovery that degraded evidence (an unparseable `tests/verify.py` or `verifier/reward.txt`). A non-empty list means some conclusion rests on less than the artifacts appear to show; the same records are printed to stderr.
 

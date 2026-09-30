@@ -400,10 +400,18 @@ def _acquire_publish_lock(out_dir: Path):
                 import fcntl
 
                 fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            except (ImportError, OSError, AttributeError):
-                pass
-        except OSError:
-            pass
+            except (ImportError, OSError, AttributeError) as lock_err:
+                print(
+                    f"WARNING: Advisory process locking unavailable or unsupported ({lock_err}); "
+                    "proceeding without concurrency serialization.",
+                    file=sys.stderr,
+                )
+        except OSError as fd_err:
+            print(
+                f"WARNING: Unable to create lock file in temp directory ({lock_path}: {fd_err}); "
+                "proceeding without process lock.",
+                file=sys.stderr,
+            )
         yield
     finally:
         if lock_fd is not None:
@@ -417,6 +425,25 @@ def _acquire_publish_lock(out_dir: Path):
                 os.close(lock_fd)
             except Exception:
                 pass
+
+
+def _validate_output_writable(out_dir: Path) -> None:
+    """Ensure out_dir can be created and written to; fail fast with exit code 2 if non-writable."""
+    if out_dir.exists() and not out_dir.is_dir():
+        print(f"ERROR: --output path exists and is not a directory: {out_dir}", file=sys.stderr)
+        sys.exit(2)
+
+    probe_file = out_dir / f".cfa_probe_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        probe_file.write_text("probe", encoding="utf-8")
+        probe_file.unlink()
+    except Exception as e:
+        print(
+            f"ERROR: --output directory is not writable or cannot be created: {out_dir} ({e})",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial: bool) -> None:
@@ -772,9 +799,16 @@ def main() -> None:
     if not args.job.exists():
         print(f"ERROR: --job path does not exist: {args.job}", file=sys.stderr)
         sys.exit(2)
-    if args.task is not None and not args.task.exists():
-        print(f"ERROR: --task path does not exist: {args.task}", file=sys.stderr)
+    if not args.job.is_dir():
+        print(f"ERROR: --job path exists and is not a directory: {args.job}", file=sys.stderr)
         sys.exit(2)
+    if args.task is not None:
+        if not args.task.exists():
+            print(f"ERROR: --task path does not exist: {args.task}", file=sys.stderr)
+            sys.exit(2)
+        if not args.task.is_dir():
+            print(f"ERROR: --task path exists and is not a directory: {args.task}", file=sys.stderr)
+            sys.exit(2)
 
     _validate_input_output_isolation(
         out_dir=args.output,
@@ -835,6 +869,8 @@ def main() -> None:
         input_roots=all_input_roots,
         planned_trial_names=planned_trial_names,
     )
+
+    _validate_output_writable(args.output)
 
     staging_dir = Path(tempfile.mkdtemp(prefix="cfa_staging_"))
     try:

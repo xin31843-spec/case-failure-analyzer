@@ -561,6 +561,72 @@ class TestLifecycleAndRerun(unittest.TestCase):
         # out_dir remains completely clean
         self.assertEqual(list(out.iterdir()), [])
 
+    def test_job_as_file_fails_with_exit_code_2(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        fake_job_file = tmp / "job.txt"
+        fake_job_file.write_text("not a directory", encoding="utf-8")
+        out = tmp / "out"
+
+        proc = run_cli("--job", str(fake_job_file), "--output", str(out), "--trial", "trial_1")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("not a directory", proc.stderr)
+
+    def test_task_as_file_fails_with_exit_code_2(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        fake_task_file = tmp / "task.txt"
+        fake_task_file.write_text("not a directory", encoding="utf-8")
+        out = tmp / "out"
+
+        proc = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--task",
+            str(fake_task_file),
+            "--output",
+            str(out),
+            "--trial",
+            "trial_b_pass",
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("not a directory", proc.stderr)
+
+    def test_output_as_file_fails_with_exit_code_2(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out_file = tmp / "out_file.txt"
+        out_file.write_text("not a directory", encoding="utf-8")
+
+        proc = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--output",
+            str(out_file),
+            "--trial",
+            "trial_b_pass",
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("not a directory", proc.stderr)
+
+    def test_output_non_writable_fails_with_exit_code_2(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        read_only_dir = tmp / "readonly_root"
+        read_only_dir.mkdir()
+        os.chmod(read_only_dir, 0o555)
+        out = read_only_dir / "target_out"
+
+        try:
+            proc = run_cli(
+                "--job",
+                str(FIXTURE_JOB),
+                "--output",
+                str(out),
+                "--trial",
+                "trial_b_pass",
+            )
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("not writable", proc.stderr)
+        finally:
+            os.chmod(read_only_dir, 0o755)
+
 
 if __name__ == "__main__":
     unittest.main()

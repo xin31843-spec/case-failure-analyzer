@@ -425,19 +425,33 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
 
 
 def is_causally_bound_numerical_failure(verify_log_text: str) -> bool:
-    """Check whether failure lines in verifier log directly report an instantaneous trajectory/coordinate tolerance failure,
-    strictly rejecting non-numerical failures like missing files, syntax errors, or unhandled exceptions.
+    """Check whether failure lines or failure blocks in verifier log directly report
+    an instantaneous trajectory/coordinate tolerance failure, strictly rejecting
+    non-numerical failures like missing files, syntax errors, or unhandled exceptions.
     """
-    failure_lines = [
-        line.strip()
-        for line in verify_log_text.splitlines()
+    lines = verify_log_text.splitlines()
+
+    # Identify failure anchor indices (accounting for pytest E / > prefixes)
+    failure_blocks: List[str] = []
+    for i, raw_line in enumerate(lines):
+        clean_line = re.sub(r"^[E>+]\s+", "", raw_line.strip()).strip()
         if re.search(
-            r"^(?:FAIL\b|AssertionError\b|Error\b|FAILED\b)|(?:^assert\s+)",
-            line.strip(),
+            r"^(?:FAIL\b|AssertionError\b|FAILED\b)|(?:^assert\s+)",
+            clean_line,
             re.IGNORECASE,
-        )
-    ]
-    if not failure_lines:
+        ):
+            # Extract anchor line plus up to 4 following context lines (the assertion block)
+            block_lines = [clean_line]
+            for next_line in lines[i + 1 : i + 5]:
+                c_next = re.sub(r"^[E>+]\s+", "", next_line.strip()).strip()
+                if not c_next:
+                    continue
+                if c_next.startswith("___") or c_next.startswith("==="):
+                    break
+                block_lines.append(c_next)
+            failure_blocks.append(" \n ".join(block_lines))
+
+    if not failure_blocks:
         return bool(
             re.search(
                 r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd)\s*=\s*[\d.]+\s*>",
@@ -446,27 +460,28 @@ def is_causally_bound_numerical_failure(verify_log_text: str) -> bool:
             )
         )
 
-    for fline in failure_lines:
-        # If the line represents a non-numerical runtime or missing-file exception, skip it
+    for block in failure_blocks:
+        # If the block represents a non-numerical runtime or missing-file exception, skip it
         if re.search(
             r"\b(?:FileNotFoundError|ModuleNotFoundError|ImportError|KeyError|IndexError|NoSuchFile|No such file|not found|absent)\b",
-            fline,
+            block,
             re.IGNORECASE,
         ):
             continue
 
         # Pytest format: "FAILED test_file.py::test_func - ErrorType: message"
         # When pytest test name contains 'trajectory', do not falsely treat test name as failure metric
-        eval_text = fline
-        if " - " in fline and fline.upper().startswith("FAILED"):
-            eval_text = fline.split(" - ", 1)[1]
+        eval_text = block
+        if " - " in block and block.upper().startswith("FAILED"):
+            eval_text = block.split(" - ", 1)[1]
 
         # Must contain a trajectory/coordinate metric bound to an explicit comparison or tolerance statement
         if re.search(
             r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd)\s*=\s*[\d.]+\s*>|"
             r"assert.*?(?:trajectory_rmsd|coord(?:inate)?_rmsd|instantaneous_position).*?[<>=!]+|"
             r"FAIL.*?(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?[<>=!]+|"
-            r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?(?:exceed|drift|diverg|tolerance|threshold)",
+            r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?(?:exceed|drift|diverg|tolerance|threshold)|"
+            r"(?:calculated|value|rmsd).*?[\d.]+\s*.*?(?:threshold|tolerance|expected).*?[\d.]+",
             eval_text,
             re.IGNORECASE,
         ):
