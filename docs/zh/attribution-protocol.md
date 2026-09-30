@@ -86,7 +86,7 @@ $$\text{Infra (启动前环境)} \longrightarrow \text{Case (题目资产/配置
 - **严格三方闭环数值验证 (`Closed-Loop Numerical Verification`)**：数值轨迹漂移判定必须同时满足以下三方条件：
   1. **Prompt 契约核验**：`instruction.md` 必须真实存在且**未**要求逐点完全重合的瞬时轨迹。若缺失 `instruction.md`，契约不完备，必须保守弃判退化至 `unknown`。
   2. **可执行 AST 代码检查**：`tests/verify.py` 必须在条件或数值比较表达式（如 `ast.Assert` 的 `node.test`、`ast.Compare` 的比较操作数或断言调用参数）中真正评估了瞬时轨迹/坐标。若相关词汇仅出现在注释、文档字符串、断言报错提示信息（`node.msg`）或字符串包含判断（`"..." in log`）中，不构成评测缺陷，必须保守弃判。
-  3. **运行时直接因果绑定**：`verifier/verify.log` 必须直接将失败断言绑定到瞬时 RMSD，且同时记录有系综均值或守恒量吻合。
+  3. **运行时直接因果绑定**：`verifier/verify.log` 必须直接将失败断言绑定到瞬时 RMSD，且同时记录有系综均值或守恒量吻合。非数值异常（如文件缺失 `FileNotFoundError`、字典缺键 `KeyError` 等）以及 pytest 测试用例函数名绝不可被误绑定为数值容差缺陷。
   4. 满足以上三项，方可判定为主根因 `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`)。
 - **竞争假设必填**：每一个失败或异常用例都必须填充 `competing_hypotheses`（对应 `candidate-hypotheses.json`）及 `first_unrecovered_deviation`。
 - **校准的证据强度评分**：置信度评分（`confidence_kind = "heuristic_evidence_score"`，`evidence_strength = "high" | "medium" | "low"`）由支持证据点数、多源交叉印证及竞争假设区分度确定性计算得出（见 `scripts/confidence.py`）。
@@ -97,5 +97,5 @@ $$\text{Infra (启动前环境)} \longrightarrow \text{Case (题目资产/配置
 
 - **清单所有权追踪与越界隔离**：输出目录中通过 `.cfa_manifest.json` 显式记录 CFA 管理的文件与目录清单。清单路径经严格安全性校验，彻底阻断路径穿越（`..`）、绝对路径及溢出输出根目录的非法路径。
 - **严格保护用户非受管文件**：在缺乏有效清单时，CFA 假定管理 0 个原有文件。用户自行创建的任意子目录及文件（如 `user_dir/report.md`、`custom_notes.txt`）受到严格保护，绝不被盲目当作旧产物清理。
-- **单文件原子替换**：发布产物先写入同级隐藏临时文件，再通过 `os.replace` 原子替换就位，彻底避免并发读取端看到半写入的损坏文件。
+- **单文件原子替换与进程并发互斥**：发布产物先写入同级隐藏临时文件，再通过 `os.replace` 原子替换就位，彻底避免并发读取端看到半写入的损坏文件。针对同一输出根目录的并发写入采用进程独占排他锁进行串行化控制，并自动清理异常退出遗留的孤儿临时文件。
 - **尽力而为事务回滚**：在新版本产物全部原子就位后才清理旧受管产物。在发布异常时触发尽力而为回滚恢复备份，次生 I/O 报错均被隔离记录至 stderr，确保如实向上抛出主异常。

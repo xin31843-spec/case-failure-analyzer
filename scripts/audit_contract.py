@@ -148,11 +148,24 @@ class VerifierASTVisitor(ast.NodeVisitor):
                 self.has_instantaneous_trajectory_assertion = True
             elif isinstance(child, ast.Attribute) and TRAJECTORY_KEYWORD_RE.search(child.attr):
                 self.has_instantaneous_trajectory_assertion = True
+            elif isinstance(child, ast.Subscript):
+                slice_node = child.slice
+                if hasattr(slice_node, "value") and not isinstance(slice_node, ast.Constant):
+                    slice_node = slice_node.value
+                if (
+                    isinstance(slice_node, ast.Constant)
+                    and isinstance(slice_node.value, str)
+                    and TRAJECTORY_KEYWORD_RE.search(slice_node.value)
+                ):
+                    self.has_instantaneous_trajectory_assertion = True
             elif (
-                isinstance(child, ast.Subscript)
-                and isinstance(child.slice, ast.Constant)
-                and isinstance(child.slice.value, str)
-                and TRAJECTORY_KEYWORD_RE.search(child.slice.value)
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "get"
+                and child.args
+                and isinstance(child.args[0], ast.Constant)
+                and isinstance(child.args[0].value, str)
+                and TRAJECTORY_KEYWORD_RE.search(child.args[0].value)
             ):
                 self.has_instantaneous_trajectory_assertion = True
 
@@ -187,6 +200,8 @@ class VerifierASTVisitor(ast.NodeVisitor):
             "assert_allclose",
             "assert_array_almost_equal",
             "assert_array_less",
+            "assert_array_equal",
+            "assert_array_almost_equal_nulp",
             "isclose",
             "allclose",
             "assertLess",
@@ -407,6 +422,57 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
         "checks_instantaneous_trajectory": checks_instantaneous_trajectory,
         "diagnostics": diagnostics,
     }
+
+
+def is_causally_bound_numerical_failure(verify_log_text: str) -> bool:
+    """Check whether failure lines in verifier log directly report an instantaneous trajectory/coordinate tolerance failure,
+    strictly rejecting non-numerical failures like missing files, syntax errors, or unhandled exceptions.
+    """
+    failure_lines = [
+        line.strip()
+        for line in verify_log_text.splitlines()
+        if re.search(
+            r"^(?:FAIL\b|AssertionError\b|Error\b|FAILED\b)|(?:^assert\s+)",
+            line.strip(),
+            re.IGNORECASE,
+        )
+    ]
+    if not failure_lines:
+        return bool(
+            re.search(
+                r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd)\s*=\s*[\d.]+\s*>",
+                verify_log_text,
+                re.IGNORECASE,
+            )
+        )
+
+    for fline in failure_lines:
+        # If the line represents a non-numerical runtime or missing-file exception, skip it
+        if re.search(
+            r"\b(?:FileNotFoundError|ModuleNotFoundError|ImportError|KeyError|IndexError|NoSuchFile|No such file|not found|absent)\b",
+            fline,
+            re.IGNORECASE,
+        ):
+            continue
+
+        # Pytest format: "FAILED test_file.py::test_func - ErrorType: message"
+        # When pytest test name contains 'trajectory', do not falsely treat test name as failure metric
+        eval_text = fline
+        if " - " in fline and fline.upper().startswith("FAILED"):
+            eval_text = fline.split(" - ", 1)[1]
+
+        # Must contain a trajectory/coordinate metric bound to an explicit comparison or tolerance statement
+        if re.search(
+            r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd)\s*=\s*[\d.]+\s*>|"
+            r"assert.*?(?:trajectory_rmsd|coord(?:inate)?_rmsd|instantaneous_position).*?[<>=!]+|"
+            r"FAIL.*?(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?[<>=!]+|"
+            r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?(?:exceed|drift|diverg|tolerance|threshold)",
+            eval_text,
+            re.IGNORECASE,
+        ):
+            return True
+
+    return False
 
 
 def audit_contract(
@@ -708,32 +774,7 @@ def audit_contract(
                     re.IGNORECASE,
                 )
             )
-            failure_lines = [
-                line.strip()
-                for line in verify_log_text.splitlines()
-                if re.search(
-                    r"^(?:FAIL\b|AssertionError\b|Error\b|FAILED\b)|(?:^assert\s+)",
-                    line.strip(),
-                    re.IGNORECASE,
-                )
-            ]
-            if failure_lines:
-                bound_to_failure = any(
-                    re.search(
-                        r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?>|assert.*?(?:trajectory|rmsd|position)|FAIL.*?(?:trajectory|instantaneous|rmsd)",
-                        fline,
-                        re.IGNORECASE,
-                    )
-                    for fline in failure_lines
-                )
-            else:
-                bound_to_failure = bool(
-                    re.search(
-                        r"(?:trajectory_rmsd|instantaneous_position).*?>",
-                        verify_log_text,
-                        re.IGNORECASE,
-                    )
-                )
+            bound_to_failure = is_causally_bound_numerical_failure(verify_log_text)
 
             instruction_exists = prompt_info.get("instruction_exists", False)
             if (

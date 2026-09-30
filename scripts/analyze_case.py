@@ -17,8 +17,11 @@ Pipeline:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -354,18 +357,80 @@ def _is_safe_manifest_relpath(rel_str: Any, out_dir: Path) -> bool:
         return False
 
 
-def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial: bool) -> None:
-    """Publish staging directory contents into out_dir with atomic file replacement and best-effort rollback.
+def _is_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
-    Guarantees:
-    1. Only managed artifacts recorded in a valid .cfa_manifest.json are cleaned.
-    2. Without a previous manifest, pre-existing files (e.g. user report.md) are strictly preserved.
-    3. Manifest paths with '..' or escaping out_dir are rejected and never deleted or written.
-    4. Each file is written via a hidden temporary file and atomically replaced (os.replace)
-       so readers never observe partially written files.
-    5. Best-effort rollback: If an error occurs, out_dir is rolled back to its pre-publish state;
-       any secondary I/O errors during rollback are captured without masking the primary exception.
-    """
+
+def _cleanup_orphaned_cfa_tmp_files(out_dir: Path) -> None:
+    """Clean up abandoned temporary or restore files left by crashed processes in out_dir."""
+    current_pid = os.getpid()
+    for p in out_dir.rglob(".*"):
+        if not p.is_file():
+            continue
+        m = re.search(r"\.(?:cfa_tmp|restore)_(\d+)_[0-9a-fA-F]+$", p.name)
+        if m:
+            try:
+                file_pid = int(m.group(1))
+                if file_pid != current_pid and not _is_pid_alive(file_pid):
+                    p.unlink()
+            except (ValueError, OSError):
+                pass
+
+
+def _get_publish_lock_path(out_dir: Path) -> Path:
+    h = hashlib.sha256(str(out_dir.resolve()).encode("utf-8")).hexdigest()[:16]
+    return Path(tempfile.gettempdir()) / f"cfa_publish_{h}.lock"
+
+
+@contextlib.contextmanager
+def _acquire_publish_lock(out_dir: Path):
+    """Acquire an exclusive advisory process lock for out_dir to prevent concurrent publish races."""
+    lock_path = _get_publish_lock_path(out_dir)
+    lock_fd = None
+    try:
+        try:
+            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                import fcntl
+
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            except (ImportError, OSError, AttributeError):
+                pass
+        except OSError:
+            pass
+        yield
+    finally:
+        if lock_fd is not None:
+            try:
+                import fcntl
+
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            try:
+                os.close(lock_fd)
+            except Exception:
+                pass
+
+
+def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial: bool) -> None:
+    """Publish staging directory contents into out_dir with atomic file replacement and best-effort rollback."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with _acquire_publish_lock(out_dir):
+        _cleanup_orphaned_cfa_tmp_files(out_dir)
+        _publish_staging_to_output_locked(staging_dir, out_dir, is_multi_trial)
+
+
+def _publish_staging_to_output_locked(
+    staging_dir: Path, out_dir: Path, is_multi_trial: bool
+) -> None:
+    """Internal publish logic executed under process lock."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Collect staged files and write manifest into staging_dir

@@ -803,11 +803,46 @@ class TestReportRegressionFindings(unittest.TestCase):
         v5.visit(ast.parse(code5))
         self.assertTrue(v5.has_instantaneous_trajectory_assertion)
 
-        # 6. assertAlmostEqual comparison argument MUST trigger
-        code6 = "self.assertAlmostEqual(trajectory_rmsd, 0.0, places=2)"
-        v6 = VerifierASTVisitor()
-        v6.visit(ast.parse(code6))
-        self.assertTrue(v6.has_instantaneous_trajectory_assertion)
+        # 7. Dictionary .get() lookup in comparison MUST trigger
+        code7 = "assert metrics.get('trajectory_rmsd') < 0.05"
+        v7 = VerifierASTVisitor()
+        v7.visit(ast.parse(code7))
+        self.assertTrue(v7.has_instantaneous_trajectory_assertion)
+
+        # 8. assert_array_equal call MUST trigger
+        code8 = "np.testing.assert_array_equal(trajectory_rmsd, expected_rmsd)"
+        v8 = VerifierASTVisitor()
+        v8.visit(ast.parse(code8))
+        self.assertTrue(v8.has_instantaneous_trajectory_assertion)
+
+    def test_27_causally_bound_numerical_failure_rejects_missing_file_pytest_header(self) -> None:
+        """P1: Verifier failure that is FileNotFoundError/KeyError must NOT be bound to numerical tolerance defect."""
+        from audit_contract import is_causally_bound_numerical_failure
+
+        # 1. Pytest test function name with 'trajectory_rmsd' but failed with FileNotFoundError
+        log1 = (
+            "FAILED tests/test_md.py::test_trajectory_rmsd - FileNotFoundError: [Errno 2] No such file: 'output.xyz'\n"
+            "ensemble average matches reference\n"
+        )
+        self.assertFalse(is_causally_bound_numerical_failure(log1))
+
+        # 2. Pytest failed with KeyError
+        log2 = (
+            "FAILED tests/test_md.py::test_trajectory_rmsd - KeyError: 'trajectory_rmsd'\n"
+            "ensemble average matches reference\n"
+        )
+        self.assertFalse(is_causally_bound_numerical_failure(log2))
+
+        # 3. Genuine numerical tolerance check failure MUST bind
+        log3 = (
+            "FAILED tests/test_md.py::test_trajectory_rmsd - AssertionError: trajectory_rmsd = 0.45 > 0.01 tolerance exceeded\n"
+            "ensemble average matches reference\n"
+        )
+        self.assertTrue(is_causally_bound_numerical_failure(log3))
+
+        # 4. Standard FAIL line with comparison MUST bind
+        log4 = "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 (ensemble average matches)"
+        self.assertTrue(is_causally_bound_numerical_failure(log4))
 
 
 if __name__ == "__main__":

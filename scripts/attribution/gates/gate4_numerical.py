@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from confidence import attach_confidence_metadata
 import re
-
 from typing import Any, Dict, Optional
 
+from audit_contract import is_causally_bound_numerical_failure
 from ..context import AttributionContext
 
 
@@ -59,28 +59,7 @@ def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, An
 
     # Direct causal binding: verify that the failing assertion in the verifier log
     # is specifically evaluating the instantaneous trajectory/position comparison.
-    failure_lines = [
-        line.strip()
-        for line in fail_text.splitlines()
-        if re.search(
-            r"^(?:FAIL\b|AssertionError\b|Error\b|FAILED\b)|(?:^assert\s+)",
-            line.strip(),
-            re.IGNORECASE,
-        )
-    ]
-    if failure_lines:
-        bound_to_failure = any(
-            re.search(
-                r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?>|assert.*?(?:trajectory|rmsd|position)|FAIL.*?(?:trajectory|instantaneous|rmsd)",
-                fline,
-                re.IGNORECASE,
-            )
-            for fline in failure_lines
-        )
-    else:
-        bound_to_failure = bool(
-            re.search(r"(?:trajectory_rmsd|instantaneous_position).*?>", fail_text, re.IGNORECASE)
-        )
+    bound_to_failure = is_causally_bound_numerical_failure(fail_text)
 
     if not bound_to_failure:
         ctx.trace.record(

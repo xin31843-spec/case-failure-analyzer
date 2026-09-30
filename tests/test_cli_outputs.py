@@ -520,6 +520,47 @@ class TestLifecycleAndRerun(unittest.TestCase):
                     "WARNING: Rollback encountered secondary I/O errors", mock_stderr.getvalue()
                 )
 
+    def test_orphaned_cfa_tmp_files_cleanup_removes_dead_pid_files(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from analyze_case import _cleanup_orphaned_cfa_tmp_files
+
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+
+        # Dead PID file (999999 is dead)
+        dead_orphan = out / ".report.md.cfa_tmp_999999_deadbeef"
+        dead_orphan.write_text("abandoned data", encoding="utf-8")
+
+        # Current PID file (alive)
+        live_tmp = out / f".report.md.cfa_tmp_{os.getpid()}_livefeed"
+        live_tmp.write_text("active data", encoding="utf-8")
+
+        _cleanup_orphaned_cfa_tmp_files(out)
+
+        # Dead orphan was unlinked
+        self.assertFalse(dead_orphan.exists())
+        # Live file for active process remains
+        self.assertTrue(live_tmp.exists())
+
+    def test_acquire_publish_lock_keeps_out_dir_clean(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from analyze_case import _acquire_publish_lock, _get_publish_lock_path
+
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+
+        lock_path = _get_publish_lock_path(out)
+
+        with _acquire_publish_lock(out):
+            # Lock file is located in temp dir, NOT polluting out_dir
+            self.assertTrue(lock_path.is_file())
+            self.assertEqual(list(out.iterdir()), [])
+
+        # out_dir remains completely clean
+        self.assertEqual(list(out.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()
