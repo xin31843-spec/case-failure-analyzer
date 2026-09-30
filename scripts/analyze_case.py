@@ -429,13 +429,14 @@ def _acquire_publish_lock(out_dir: Path):
 
 def _validate_output_writable(out_dir: Path) -> None:
     """Ensure out_dir can be created and written to; fail fast with exit code 2 if non-writable."""
-    if out_dir.exists() and not out_dir.is_dir():
+    target = out_dir.resolve()
+    if target.exists() and not target.is_dir():
         print(f"ERROR: --output path exists and is not a directory: {out_dir}", file=sys.stderr)
         sys.exit(2)
 
-    probe_file = out_dir / f".cfa_probe_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    probe_file = target / f".cfa_probe_{os.getpid()}_{uuid.uuid4().hex[:8]}"
     try:
-        out_dir.mkdir(parents=True, exist_ok=True)
+        target.mkdir(parents=True, exist_ok=True)
         probe_file.write_text("probe", encoding="utf-8")
         probe_file.unlink()
     except Exception as e:
@@ -448,7 +449,7 @@ def _validate_output_writable(out_dir: Path) -> None:
 
 def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial: bool) -> None:
     """Publish staging directory contents into out_dir with atomic file replacement and best-effort rollback."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.resolve().mkdir(parents=True, exist_ok=True)
     with _acquire_publish_lock(out_dir):
         _cleanup_orphaned_cfa_tmp_files(out_dir)
         _publish_staging_to_output_locked(staging_dir, out_dir, is_multi_trial)
@@ -458,7 +459,7 @@ def _publish_staging_to_output_locked(
     staging_dir: Path, out_dir: Path, is_multi_trial: bool
 ) -> None:
     """Internal publish logic executed under process lock."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.resolve().mkdir(parents=True, exist_ok=True)
 
     # 1. Collect staged files and write manifest into staging_dir
     staged_rel_paths = sorted(

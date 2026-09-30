@@ -627,6 +627,42 @@ class TestLifecycleAndRerun(unittest.TestCase):
         finally:
             os.chmod(read_only_dir, 0o755)
 
+    def test_output_symlink_to_directory_succeeds(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        target_dir = tmp / "actual_output_dir"
+        symlink_out = tmp / "symlink_output"
+        symlink_out.symlink_to(target_dir)
+
+        proc = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--output",
+            str(symlink_out),
+            "--trial",
+            "trial_b_pass",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue((target_dir / "report.md").is_file())
+        self.assertTrue((target_dir / "evidence.json").is_file())
+
+    def test_output_symlink_to_file_fails_with_exit_code_2(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        target_file = tmp / "a_file.txt"
+        target_file.write_text("i am a file", encoding="utf-8")
+        symlink_out = tmp / "symlink_output"
+        symlink_out.symlink_to(target_file)
+
+        proc = run_cli(
+            "--job",
+            str(FIXTURE_JOB),
+            "--output",
+            str(symlink_out),
+            "--trial",
+            "trial_b_pass",
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("not a directory", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
