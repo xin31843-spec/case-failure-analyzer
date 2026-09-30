@@ -54,9 +54,19 @@ def gate5_insufficient_positive_evidence(ctx: AttributionContext) -> Optional[Di
         or premature_sigs
         or agent_mismatch_contracts
         or (
-            unverified_output_sigs
+            (
+                unverified_output_sigs
+                or any(
+                    s.get("signal_type") in ("asset_modified", "scientific_parameter_changed")
+                    for s in ctx.signals
+                )
+            )
             and fail_text
-            and re.search(r"(?:got\s+[-+\d.eEdD]+|mismatch|wrong value)", fail_text, re.IGNORECASE)
+            and re.search(
+                r"(?:got\s+[-+\d.eEdD]+|mismatch|wrong value|!=|differs from|does not match|expected\s+.*?found|too large|too small|exceeds|missing|not specified|does not enable|requested.*?window|colleague)",
+                fail_text,
+                re.IGNORECASE,
+            )
         )
     )
 

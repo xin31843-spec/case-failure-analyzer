@@ -36,7 +36,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from audit_contract import audit_contract
 from discover_artifacts import discover_all, discover_trials
-from extract_runtime_errors import extract_runtime_errors
+from extract_runtime_errors import extract_runtime_errors, read_text_head_tail
 from extract_scientific_errors import extract_scientific_errors
 from generate_hypotheses import generate_candidate_hypotheses
 from normalize_trajectory import normalize_trajectory
@@ -45,6 +45,58 @@ from runtime_state import resolve_trajectory_path
 from validate_analysis import validate_all
 from attribution.engine import run_attribution_engine
 from diagnostics import format_diagnostic_line, merge_diagnostics
+
+try:
+    from verify_check_stats import build_check_stats
+except ImportError:
+    # `verify_check_stats.py` is created by the parallel confidence-upgrade
+    # workstream; until it lands, the additive `verifier_check_stats` evidence
+    # key is simply omitted and every other behavior is unchanged.
+    build_check_stats = None  # type: ignore[assignment]
+
+#: Candidate verifier-log paths, mirroring the discovery order in
+#: `audit_contract.audit_contract`.
+_VERIFIER_LOG_RELPATHS = (
+    "verifier/verify.log",
+    "verifier/test-stdout.txt",
+    "verifier/pytest.log",
+    "verifier/verifier.log",
+    "verify.log",
+)
+
+
+def _read_verifier_log_text(trial_dir: Optional[Path], max_log_bytes: int) -> str:
+    """Read the trial's verifier log with the shared `--max-log-bytes` head/tail
+    truncation. Returns "" when no verifier log exists or is non-empty."""
+    if trial_dir is None:
+        return ""
+    for rel_path in _VERIFIER_LOG_RELPATHS:
+        text = read_text_head_tail(trial_dir / rel_path, max_log_bytes)
+        if text.strip():
+            return text
+    return ""
+
+
+def _build_verifier_check_stats(
+    trial_dir: Optional[Path], max_log_bytes: int
+) -> Optional[Dict[str, Any]]:
+    """
+    Compute the verifier check statistics stored on evidence as the additive
+    `verifier_check_stats` key (consumed by the attribution confidence upgrade
+    via `AttributionContext.check_localization`). Returns None when the stats
+    builder is unavailable, no verifier log text exists, or the builder fails —
+    evidence collection must never crash on an optional additive key.
+    """
+    if build_check_stats is None:
+        return None
+    verify_log_text = _read_verifier_log_text(trial_dir, max_log_bytes)
+    if not verify_log_text.strip():
+        return None
+    try:
+        stats = build_check_stats(verify_log_text)
+    except Exception:
+        return None
+    return stats if isinstance(stats, dict) else None
 
 
 class ReplayNotSupportedError(RuntimeError):
@@ -110,6 +162,12 @@ def collect_case_evidence(
             contract_res.get("diagnostics"),
         ),
     }
+    # Additive top-level key: verifier check statistics for the confidence
+    # upgrade (`check_localization` measurement). Present only when a verifier
+    # log exists, so trials without one keep their previous evidence shape.
+    verifier_check_stats = _build_verifier_check_stats(trial_dir, max_log_bytes)
+    if verifier_check_stats is not None:
+        evidence["verifier_check_stats"] = verifier_check_stats
     cand_hyps = generate_candidate_hypotheses(evidence)
     return evidence, norm_traj, contract_res, cand_hyps
 

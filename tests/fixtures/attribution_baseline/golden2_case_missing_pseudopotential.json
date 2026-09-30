@@ -20,7 +20,7 @@
     "subtype": "missing_asset",
     "code": "CASE_MISSING_ASSET",
     "summary": "Prompt references asset `Ge_nonexistent.UPF`, which does not exist in `environment/assets/` or `Dockerfile`.",
-    "confidence": 0.33,
+    "confidence": 0.43,
     "confidence_kind": "heuristic_evidence_score",
     "evidence_strength": "medium"
   },
@@ -37,7 +37,7 @@
       "evidence_against": [],
       "missing_evidence": [],
       "counterfactual_test": "Add the missing pseudopotential/input asset to `environment/assets/`.",
-      "confidence": 0.33,
+      "confidence": 0.43,
       "confidence_kind": "heuristic_evidence_score",
       "evidence_strength": "medium"
     },

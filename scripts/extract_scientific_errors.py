@@ -16,12 +16,26 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 REGISTRY_PATH = Path(__file__).resolve().parent.parent / "references" / "error-families.json"
 
 AdapterEntry = Tuple[str, str, List[str], re.Pattern[str], List[str], List[str]]
+
+# Verifier logs scanned by the knowledge-base family adapters (section 3) and by
+# the deterministic recompute-divergence parser (section 4). Order matters: the
+# canonical `<trial>/verifier/verify.log` is scanned first.
+_VERIFIER_LOG_REL_PATHS = (
+    "verifier/verify.log",
+    "verifier/test-stdout.txt",
+    "verifier/pytest.log",
+    "verify.log",
+)
+
+# Raw ATIF trajectory.json files larger than this are skipped for agent-side
+# corroboration (corroboration is best-effort; never load unbounded files).
+MAX_TRAJECTORY_JSON_BYTES = 4_000_000
 
 
 def load_error_family_registry(registry_path: Path = REGISTRY_PATH) -> Dict[str, Dict[str, Any]]:
@@ -202,12 +216,7 @@ def extract_scientific_errors(
 
     # 3. Scan verifier logs (verify.log, test-stdout.txt, pytest.log)
     if trial_dir:
-        for rel_vlog in (
-            "verifier/verify.log",
-            "verifier/test-stdout.txt",
-            "verifier/pytest.log",
-            "verify.log",
-        ):
+        for rel_vlog in _VERIFIER_LOG_REL_PATHS:
             vpath = trial_dir / rel_vlog
             if vpath.is_file():
                 vlog = _read_bounded_text(vpath)
@@ -234,6 +243,35 @@ def extract_scientific_errors(
                             }
                         )
                         sci_counter += 1
+
+    # 4. Deterministic verifier recompute-divergence parsing over numeric
+    #    FAIL/exception lines in verifier logs. Unlike the knowledge-base
+    #    adapters above, this parses the verifier's own recomputed numbers, so
+    #    `scientific_observations` gains structured numeric evidence even when
+    #    no software-specific family pattern matches. Observations are appended
+    #    after the family observations, continuing the `sci:N` ordinal sequence
+    #    as `sci:recompute_divergence:<n>`.
+    if trial_dir:
+        trajectory_steps = _load_trajectory_steps(trial_dir)
+        for rel_vlog in _VERIFIER_LOG_REL_PATHS:
+            vpath = trial_dir / rel_vlog
+            if not vpath.is_file():
+                continue
+            source_label = (
+                f"verifier:{vpath.name}" if rel_vlog.startswith("verifier/") else vpath.name
+            )
+            for divergence in extract_verifier_divergences(
+                _read_numbered_lines(vpath),
+                trajectory_steps=trajectory_steps,
+                source_label=source_label,
+            ):
+                dedup_key = divergence["matched_text"]
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                divergence["sci_id"] = f"sci:recompute_divergence:{sci_counter}"
+                observations.append(divergence)
+                sci_counter += 1
 
     return {"scientific_observations": observations}
 
@@ -264,6 +302,297 @@ def _extract_match_line(text: str, match: re.Match[str]) -> str:
         line_end = len(text)
     line = text[line_start:line_end].strip()
     return line or match.group(0)
+
+
+# ---------------------------------------------------------------------------
+# Verifier recompute-divergence parsing (verifier logs -> scientific_observations)
+#
+# Textbook verifier failures carry deterministic recomputed numbers, e.g.
+#   FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)
+#   FAIL: final energy -0.02125869 eV differs from ref -0.02125870
+#   FAIL: results.json n_msd_rows must be 100, got 51
+#   FAIL: expected 10 irreducible k-points, got 11
+# The patterns below are matched in priority order (P1..P4); each qualifying
+# line yields at most one observation (first hit wins).
+# ---------------------------------------------------------------------------
+
+VERIFIER_SOFTWARE_LABEL = "verifier"
+VERIFIER_DIVERGENCE_FAMILY = "verifier_recompute_divergence"
+VERIFIER_DIVERGENCE_ALIASES = ("numerical_divergence",)
+# Schema-compat guidance strings: the attribution gates index
+# `required_discriminating_evidence` / `candidate_causes` on the first
+# unrecovered scientific observation, so verifier-sourced observations must
+# carry both keys to keep the existing observation schema compatible.
+VERIFIER_DIVERGENCE_EVIDENCE = (
+    "reported_value",
+    "recomputed_value",
+    "tolerance",
+    "agent_reported_value",
+)
+
+_NUMBER = r"[-+0-9.eE]+"
+_INT = r"[-+0-9]+"
+
+# P1: `reported [<metric>] <rep> != recomputed [<metric>] <rec> (tol <tol>)`
+# with optional tolerance. The metric label between `reported`/`recomputed`
+# and the number is optional so both `reported max_force 0.02863 != ...` (the
+# real corpus form) and `reported 0.02863 != ...` parse.
+_P1_METRIC_LABEL = r"(?:[A-Za-z_][A-Za-z0-9_.]*\s+)?"
+_P1_RECOMPUTE_TOLERANCE = re.compile(
+    rf"reported {_P1_METRIC_LABEL}(?P<rep>{_NUMBER}) != recomputed {_P1_METRIC_LABEL}"
+    rf"(?P<rec>{_NUMBER})(?: \(tol (?P<tol>{_NUMBER})\))?"
+)
+# P2: `<metric> <rep>[ <unit>] differs from [the] <ref|reference|recomputed|
+# expected|pinned> <rec>`. The optional unit token (e.g. `eV`, `eV/A`) is a
+# conservative superset of the reference pattern so textbook lines such as
+# `final energy -0.02125869 eV differs from ref ...` still parse.
+_P2_REF_KEYWORDS = r"(?:ref|reference|recomputed|expected|pinned)"
+_P2_REFERENCE_MISMATCH = re.compile(
+    rf"(?P<metric>[A-Za-z_][A-Za-z0-9_]*) (?P<rep>{_NUMBER})"
+    rf"(?:\s+[^\s,;]+)?\s+differs from (?:the )?{_P2_REF_KEYWORDS} (?P<rec>{_NUMBER})"
+)
+# P3: integer count mismatches (`must be N, got M` / `expected N ..., got M`).
+_P3A_MUST_BE_COUNT = re.compile(rf"must be (?P<rec>{_INT}), got (?P<rep>{_INT})")
+_P3B_EXPECTED_COUNT = re.compile(rf"expected (?P<rec>{_INT})[^,;]*, got (?P<rep>{_INT})")
+# P4: fallback for FAIL lines with a bare numeric inequality.
+_P4_FAIL_INEQUALITY = re.compile(rf"(?P<rep>{_NUMBER})\s*!=\s*(?P<rec>{_NUMBER})")
+
+_DIVERGENCE_PATTERNS: List[Tuple[re.Pattern[str], str, bool]] = [
+    (_P1_RECOMPUTE_TOLERANCE, "recompute_divergence", False),
+    (_P2_REFERENCE_MISMATCH, "reference_mismatch", False),
+    (_P3A_MUST_BE_COUNT, "count_mismatch", False),
+    (_P3B_EXPECTED_COUNT, "count_mismatch", False),
+    (_P4_FAIL_INEQUALITY, "recompute_divergence", True),
+]
+
+# Only numeric FAIL/exception lines are considered divergence candidates.
+_DIVERGENCE_LINE_MARKER = re.compile(r"FAIL|\bTraceback\b|\w*Error\b|\bException\b|\bassert\b")
+_HAS_DIGIT = re.compile(r"\d")
+
+# Best-effort metric extraction: prefer known metric keywords, else the first
+# identifier-like token that is not verifier boilerplate.
+_METRIC_KEYWORD_RE = re.compile(
+    r"max_force|final_energy|energy|n_[a-z_]+|n_clusters|n_rotatable_bonds|cons_qty\w*|\bD\b"
+)
+_METRIC_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_METRIC_STOPWORDS = frozenset(
+    {
+        "fail", "failed", "failure", "reported", "recomputed", "expected", "got", "must",
+        "be", "the", "a", "an", "is", "are", "was", "were", "to", "of", "in", "on", "with",
+        "for", "and", "or", "not", "no", "value", "values", "ref", "reference", "differs",
+        "from", "tol", "tolerance", "pinned", "check", "checked", "verify", "verifier",
+        "verification", "line", "actual", "result", "results", "json", "log", "product",
+        "but", "it", "its", "this", "that", "number", "count", "mismatch", "error",
+        "exception", "traceback", "assert", "assertion", "nan", "inf", "vs", "by", "at",
+        "as", "than", "then",
+    }
+)
+
+
+def _parse_number(raw: Optional[str], as_int: bool = False) -> Optional[Union[int, float]]:
+    """Parse a regex-captured numeric token; return None when unparseable."""
+    if raw is None:
+        return None
+    try:
+        return int(raw) if as_int else float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_metric_from_line(line: str) -> Optional[str]:
+    """Best-effort metric name extraction from a verifier log line."""
+    keyword = _METRIC_KEYWORD_RE.search(line)
+    if keyword:
+        return keyword.group(0)
+    for m in _METRIC_IDENTIFIER_RE.finditer(line):
+        if m.group(0).lower() not in _METRIC_STOPWORDS:
+            return m.group(0)
+    return None
+
+
+def _match_divergence_line(line: str) -> Optional[Dict[str, Any]]:
+    """Match one verifier line against P1..P4 in order (first hit wins)."""
+    for pattern, check_kind, requires_fail in _DIVERGENCE_PATTERNS:
+        if requires_fail and "FAIL" not in line:
+            continue
+        m = pattern.search(line)
+        if not m:
+            continue
+        if check_kind == "count_mismatch":
+            reported = _parse_number(m.group("rep"), as_int=True)
+            recomputed = _parse_number(m.group("rec"), as_int=True)
+            tolerance = None
+        else:
+            reported = _parse_number(m.group("rep"))
+            recomputed = _parse_number(m.group("rec"))
+            tolerance = _parse_number(m.groupdict().get("tol"))
+        metric = m.groupdict().get("metric") or _extract_metric_from_line(line)
+        return {
+            "check_kind": check_kind,
+            "metric": metric,
+            "reported_raw": m.group("rep"),
+            "reported_value": reported,
+            "recomputed_value": recomputed,
+            "tolerance": tolerance,
+        }
+    return None
+
+
+def _value_string_candidates(raw: Optional[str], parsed: Any) -> List[str]:
+    """String forms of the reported value to search for in trajectory text."""
+    candidates: List[str] = []
+    if raw:
+        candidates.append(raw)
+        if "-" in raw:
+            # ATIF trajectory prose often typesets U+2212 MINUS SIGN where the
+            # verifier log prints an ASCII hyphen-minus.
+            candidates.append(raw.replace("-", "\u2212"))
+    if isinstance(parsed, float):
+        candidates.append(repr(parsed))
+    elif isinstance(parsed, int):
+        candidates.append(str(parsed))
+    unique: List[str] = []
+    for cand in candidates:
+        if cand and cand not in unique:
+            unique.append(cand)
+    return unique
+
+
+def _corroborate_agent_reported_value(
+    metric: Optional[str],
+    reported_raw: Optional[str],
+    reported_value: Any,
+    trajectory_steps: Optional[List[Tuple[Any, str]]],
+) -> Tuple[bool, Any, Optional[str]]:
+    """Search serialized trajectory steps for the metric + reported value pair.
+
+    A step corroborates when both the metric name and one string form of the
+    reported value occur within the same step's serialized text. Unparseable
+    reported values are never corroborated.
+    """
+    if reported_value is None or not trajectory_steps:
+        return False, None, None
+    value_candidates = _value_string_candidates(reported_raw, reported_value)
+    for idx, (step_id, step_text) in enumerate(trajectory_steps):
+        if not step_text:
+            continue
+        metric_present = metric is None or metric in step_text
+        if metric_present and any(cand in step_text for cand in value_candidates):
+            ref_id = step_id if step_id is not None else idx + 1
+            return True, reported_value, f"trajectory:step:{ref_id}"
+    return False, None, None
+
+
+def _load_trajectory_steps(trial_dir: Optional[Path]) -> List[Tuple[Any, str]]:
+    """Load (step_id, serialized step text) pairs from the trial's raw trajectory.
+
+    The raw ATIF `agent/trajectory.json` is used (not the normalized events) so
+    corroboration sees the agent's own verbatim numbers. Any read/parse failure
+    yields an empty list: corroboration is best-effort and must never fabricate.
+    """
+    if trial_dir is None:
+        return []
+    traj_path = trial_dir / "agent" / "trajectory.json"
+    try:
+        if not traj_path.is_file() or traj_path.stat().st_size > MAX_TRAJECTORY_JSON_BYTES:
+            return []
+        data = json.loads(traj_path.read_bytes().decode("utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return []
+    steps = data.get("steps") if isinstance(data, dict) else None
+    if not isinstance(steps, list):
+        return []
+    serialized: List[Tuple[Any, str]] = []
+    for step in steps:
+        step_id = step.get("step_id") if isinstance(step, dict) else None
+        try:
+            text = json.dumps(step, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = str(step)
+        serialized.append((step_id, text))
+    return serialized
+
+
+def _read_numbered_lines(path: Path, max_bytes: int = 2_000_000) -> List[Tuple[int, str]]:
+    """Read a verifier log as (1-based line number, line text) pairs.
+
+    Files up to `max_bytes` are read whole so line numbers are exact. Larger
+    files keep the head and tail halves; the skipped middle is only counted for
+    newlines so tail line numbers stay true (the split point may bisect one
+    line, which is acceptable for a best-effort parse of oversized logs).
+    """
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return []
+    if len(data) <= max_bytes:
+        text = data.decode("utf-8", errors="replace")
+        return [(i + 1, ln) for i, ln in enumerate(text.splitlines())]
+    half = max_bytes // 2
+    head = data[:half]
+    tail = data[len(data) - half :]
+    middle_newlines = data[half : len(data) - half].count(b"\n")
+    tail_start = head.count(b"\n") + middle_newlines + 1
+    head_lines = head.decode("utf-8", errors="replace").splitlines()
+    numbered = [(i + 1, ln) for i, ln in enumerate(head_lines)]
+    tail_lines = tail.decode("utf-8", errors="replace").splitlines()
+    numbered.extend((tail_start + i, ln) for i, ln in enumerate(tail_lines))
+    return numbered
+
+
+def extract_verifier_divergences(
+    numbered_lines: List[Tuple[int, str]],
+    trajectory_steps: Optional[List[Tuple[Any, str]]] = None,
+    source_label: str = "verifier:verify.log",
+) -> List[Dict[str, Any]]:
+    """Parse numbered verifier-log lines into recompute-divergence observations.
+
+    `numbered_lines` holds (1-based line number, line text) pairs. Only lines
+    that contain a digit and a FAIL/exception marker are considered; each line
+    is matched against P1..P4 in order and yields at most one observation.
+    `trajectory_steps` (from `_load_trajectory_steps`) enables best-effort
+    agent-side corroboration of the reported value.
+    """
+    results: List[Dict[str, Any]] = []
+    for lineno, raw_line in numbered_lines:
+        line = raw_line.strip()
+        if not line or not _HAS_DIGIT.search(line):
+            continue
+        if not _DIVERGENCE_LINE_MARKER.search(line):
+            continue
+        hit = _match_divergence_line(line)
+        if hit is None:
+            continue
+        agent_matches, agent_value, agent_ref = _corroborate_agent_reported_value(
+            hit["metric"],
+            hit["reported_raw"],
+            hit["reported_value"],
+            trajectory_steps,
+        )
+        results.append(
+            {
+                "software": VERIFIER_SOFTWARE_LABEL,
+                "error_family": VERIFIER_DIVERGENCE_FAMILY,
+                "aliases": list(VERIFIER_DIVERGENCE_ALIASES),
+                "reference_anchor": None,
+                "matched_text": line,
+                "source_ref": f"{source_label}:L{lineno}",
+                "metric": hit["metric"],
+                "reported_value": hit["reported_value"],
+                "recomputed_value": hit["recomputed_value"],
+                "tolerance": hit["tolerance"],
+                "check_kind": hit["check_kind"],
+                "agent_reported_value": agent_value,
+                "agent_ref": agent_ref,
+                "agent_reported_matches": agent_matches,
+                "discriminating": (
+                    hit["reported_value"] is not None and hit["recomputed_value"] is not None
+                ),
+                "candidate_causes": [],
+                "required_discriminating_evidence": list(VERIFIER_DIVERGENCE_EVIDENCE),
+            }
+        )
+    return results
 
 
 def main() -> None:

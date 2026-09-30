@@ -372,29 +372,29 @@ def _render_chinese_bilingual_core(
 
     if include_en_labels:
         lines.append(
-            f"> 📌 **Root Cause Hierarchy / 根因分类归属**：[Major Category / 大类] {cat_zh} ➔ [Subcategory / 二级子类] `{subtype}` (`{code}`)  \n"
-            f"> ⚖️ **Verdict & Gate / 最终裁定与运行门控**：`{verdict}` "
+            f"- **根因分类归属 (Root Cause Hierarchy)**：[Major Category / 大类] {cat_zh} ➔ [Subcategory / 二级子类] `{subtype}` (`{code}`)\n"
+            f"- **最终裁定与运行门控 (Verdict & Gate)**：`{verdict}` "
             f"(Execution: `{exec_status}`, Verification: `{runtime.get('verification_status', 'unknown')}`, "
             f"Reward: `{runtime.get('reward')}`, Gate: `agent_started={runtime.get('agent_started')}`, "
-            f"`verifier_started={runtime.get('verifier_started')}`)  \n"
-            f"> ⏱️ **Stage Transition / 阶段跃迁轨迹**：发生阶段 `{f_stage}` ➔ 检出阶段 `{d_stage}` "
-            f"(`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`)  \n"
-            f"> 🎯 **Direct Failure Cause / 具体失败表象**：{direct_cause}  \n"
-            f"> 🔍 **Internal Root Cause / 深层内部原因**：{internal_cause}  \n"
-            f"> 📊 **Evidence Confidence / 证据置信度**：**{conf_val:.2f}** [`{conf_kind}`, 强度=`{ev_strength}`]\n"
+            f"`verifier_started={runtime.get('verifier_started')}`)\n"
+            f"- **阶段跃迁轨迹 (Stage Transition)**：发生阶段 `{f_stage}` ➔ 检出阶段 `{d_stage}` "
+            f"(`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`)\n"
+            f"- **具体失败表象 (Direct Failure Cause)**：{direct_cause}\n"
+            f"- **深层内部原因 (Internal Root Cause)**：{internal_cause}\n"
+            f"- **证据置信度 (Evidence Confidence)**：**{conf_val:.2f}** [`{conf_kind}`, 强度=`{ev_strength}`]\n"
         )
     else:
         lines.append(
-            f"> 📌 **根因分类归属**：【大类】{cat_zh} ➔ 【二级子类】`{subtype}` (`{code}`)  \n"
-            f"> ⚖️ **最终裁定与运行门控**：`{verdict}` "
+            f"- **根因分类归属**：【大类】{cat_zh} ➔ 【二级子类】`{subtype}` (`{code}`)\n"
+            f"- **最终裁定与运行门控**：`{verdict}` "
             f"（执行状态: `{exec_status}`，验证状态: `{runtime.get('verification_status', 'unknown')}`，"
             f"得分: `{runtime.get('reward')}`，启动门禁: `agent_started={runtime.get('agent_started')}`，"
-            f"`verifier_started={runtime.get('verifier_started')}`）  \n"
-            f"> ⏱️ **阶段跃迁轨迹**：发生阶段 `{f_stage}` ➔ 检出阶段 `{d_stage}` "
-            f"（`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`）  \n"
-            f"> 🎯 **具体失败原因**：{direct_cause}  \n"
-            f"> 🔍 **深层内部根因**：{internal_cause}  \n"
-            f"> 📊 **证据置信度**：**{conf_val:.2f}** [`{conf_kind}`, 强度=`{ev_strength}`]\n"
+            f"`verifier_started={runtime.get('verifier_started')}`）\n"
+            f"- **阶段跃迁轨迹**：发生阶段 `{f_stage}` ➔ 检出阶段 `{d_stage}` "
+            f"（`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`）\n"
+            f"- **具体失败原因**：{direct_cause}\n"
+            f"- **深层内部根因**：{internal_cause}\n"
+            f"- **证据置信度**：**{conf_val:.2f}** [`{conf_kind}`, 强度=`{ev_strength}`]\n"
         )
 
     # 2. 故障现场与因果证据链
@@ -542,15 +542,15 @@ def _render_english_edition(
     direct_cause = manifestation.get("summary") or "N/A"
     internal_cause = prc.get("summary") or manifestation.get("summary") or "N/A"
     lines.append(
-        f"> 📌 **Root Cause Hierarchy**: [Major Category] {cat_en} (`{cat}`) ➔ [Subcategory] `{subtype}` (`{code}`)  \n"
-        f"> ⚖️ **Verdict & Gate**: `{verdict}` (Execution: `{exec_status}`, "
+        f"- **Root Cause Hierarchy**: [Major Category] {cat_en} (`{cat}`) ➔ [Subcategory] `{subtype}` (`{code}`)\n"
+        f"- **Verdict & Gate**: `{verdict}` (Execution: `{exec_status}`, "
         f"Verification: `{runtime.get('verification_status', 'unknown')}`, Reward: `{runtime.get('reward')}`, "
-        f"Gate: `agent_started={runtime.get('agent_started')}`, `verifier_started={runtime.get('verifier_started')}`)  \n"
-        f"> ⏱️ **Stage Transition**: `{f_stage}` → detected at `{d_stage}` "
-        f"(`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`)  \n"
-        f"> 🎯 **Direct Failure Cause**: {direct_cause}  \n"
-        f"> 🔍 **Internal Root Cause**: {internal_cause}  \n"
-        f"> 📊 **Evidence Confidence**: **{conf_val:.2f}** [`{conf_kind}`, strength=`{ev_strength}`]\n"
+        f"Gate: `agent_started={runtime.get('agent_started')}`, `verifier_started={runtime.get('verifier_started')}`)\n"
+        f"- **Stage Transition**: `{f_stage}` → detected at `{d_stage}` "
+        f"(`{runtime.get('started_at') or '-'}` ~ `{runtime.get('finished_at') or '-'}`)\n"
+        f"- **Direct Failure Cause**: {direct_cause}\n"
+        f"- **Internal Root Cause**: {internal_cause}\n"
+        f"- **Evidence Confidence**: **{conf_val:.2f}** [`{conf_kind}`, strength=`{ev_strength}`]\n"
     )
 
     # 2. Failure Manifestation & Evidence Chain

@@ -20,7 +20,7 @@
     "subtype": "path_or_dependency_discovery",
     "code": "AGENT_PATH_OR_DEPENDENCY_DISCOVERY",
     "summary": "Simulation failed with `basis_or_potential_missing` (cp2k) because agent did not search container directories (`/opt/` or `/workspace/assets/`) or resolve model/potential/force-field paths.",
-    "confidence": 0.67,
+    "confidence": 0.71,
     "confidence_kind": "heuristic_evidence_score",
     "evidence_strength": "high"
   },
@@ -39,7 +39,7 @@
       "evidence_against": [],
       "missing_evidence": [],
       "counterfactual_test": "Correct the agent's input script / workflow decision and run `verify.py`.",
-      "confidence": 0.67,
+      "confidence": 0.71,
       "confidence_kind": "heuristic_evidence_score",
       "evidence_strength": "high"
     },

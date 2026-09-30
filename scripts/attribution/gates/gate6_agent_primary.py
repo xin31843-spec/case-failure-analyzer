@@ -21,6 +21,7 @@ from ..families import (
 from confidence import attach_confidence_metadata
 from runtime_state import SCHEMA_VERSION
 
+import re
 from typing import Any, Dict, Optional
 
 from ..context import AttributionContext
@@ -158,14 +159,147 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
             )
         )
         skill_prescription = None
-    # Subcase 5e: Inaccurate output / calculation error backed by unverified output signal
-    elif unverified_output_sigs and fail_text:
+    # Subcase 5e: Inaccurate output / calculation error backed by behavioral signals
+    elif (unverified_output_sigs or signals) and fail_text:
         subcase_id = "5e"
-        subtype = "result_validation"
-        code = "AGENT_RESULT_VALIDATION"
-        summary = f"Agent wrote results.json without sanity validation, producing inaccurate physical/numerical values: {fail_text[:200]}"
-        fud_ref = unverified_output_sigs[0]["event_ref"]
+        fud_ref = (
+            unverified_output_sigs[0]["event_ref"]
+            if unverified_output_sigs
+            else (
+                signals[0]["event_ref"]
+                if signals
+                else (timeline[-1]["event_id"] if timeline else "ver:fail_log")
+            )
+        )
         skill_prescription = None
+
+        if re.search(r"(?:spin-polarized|UKS|LSD|theory|functional)", fail_text, re.IGNORECASE):
+            subtype = "scientific_method_selection"
+            code = "AGENT_SCIENTIFIC_METHOD_SELECTION"
+            summary = (
+                f"Agent failed to select appropriate scientific theory/method "
+                f"(e.g. spin-polarization for open-shell systems): {fail_text[:200]}"
+            )
+            skill_prescription = {
+                "recommended_skill": {
+                    "name": "open-shell-radical-scf-protocol",
+                    "trigger": ["Open-shell radical or spin-polarized calculation required"],
+                    "capability_gap": [
+                        "Agent failed to identify open-shell radical state and enable spin-polarization (UKS/LSD)."
+                    ],
+                    "required_guidance": [
+                        "Inspect system valence electron count; enable spin polarization (UKS/LSD) for doublet or triplet states."
+                    ],
+                    "anti_patterns": [
+                        "Do not attempt closed-shell RKS/RHF calculations on systems with unpaired electrons."
+                    ],
+                    "evidence_cases": [f"{case_id}:{fud_ref}"],
+                }
+            }
+        elif re.search(
+            r"(?:timestep.*?too large|stability limit|expected \d+ irreducible k-points|max_force.*?!=|differential step)",
+            fail_text,
+            re.IGNORECASE,
+        ):
+            subtype = "scientific_parameter_selection"
+            code = "AGENT_SCIENTIFIC_PARAMETER_SELECTION"
+            summary = (
+                f"Agent selected simulation parameters violating numerical stability, cutoff convergence, "
+                f"or grid sampling limits: {fail_text[:200]}"
+            )
+            skill_prescription = {
+                "recommended_skill": {
+                    "name": "scientific-parameter-selection-protocol",
+                    "trigger": ["Simulation parameter selection for numerical stability or convergence"],
+                    "capability_gap": [
+                        "Agent chose parameters (timestep, k-points, cutoff) outside physical stability boundaries."
+                    ],
+                    "required_guidance": [
+                        "Verify numerical stability limits (e.g. LJ dt <= 0.006) and Monkhorst-Pack grid shifts."
+                    ],
+                    "anti_patterns": [
+                        "Do not select integration timesteps exceeding the numerical stability threshold."
+                    ],
+                    "evidence_cases": [f"{case_id}:{fud_ref}"],
+                }
+            }
+        elif re.search(
+            r"(?:pinned asset geometry|outdir mismatch|prefix mismatch)", fail_text, re.IGNORECASE
+        ):
+            subtype = "planning"
+            code = "AGENT_PLANNING"
+            summary = (
+                f"Agent failed in workflow orchestration or context state preservation "
+                f"(e.g. modified pinned assets or mismatched outdir): {fail_text[:200]}"
+            )
+            skill_prescription = {
+                "recommended_skill": {
+                    "name": "workflow-state-preservation-protocol",
+                    "trigger": [
+                        "Multi-stage workflow with pinned input assets or interdependent stages"
+                    ],
+                    "capability_gap": [
+                        "Agent modified immutable input assets or failed to propagate directory context across steps."
+                    ],
+                    "required_guidance": [
+                        "Ensure referenced assets remain unmodified and output directories (outdir) match across stages."
+                    ],
+                    "anti_patterns": ["Do not overwrite or re-optimize pinned reference assets."],
+                    "evidence_cases": [f"{case_id}:{fud_ref}"],
+                }
+            }
+        elif re.search(r"(?:missing celldm|celldm\(1\)|syntax error)", fail_text, re.IGNORECASE):
+            subtype = "tool_use"
+            code = "AGENT_TOOL_USE"
+            summary = (
+                f"Agent input-generation script or tool call omitted required simulation parameters "
+                f"or contained syntax errors: {fail_text[:200]}"
+            )
+            skill_prescription = {
+                "recommended_skill": {
+                    "name": "scientific-input-templating-sanitizer",
+                    "trigger": ["Automated generation of simulation input files"],
+                    "capability_gap": ["Script generation omitted essential namelist parameters."],
+                    "required_guidance": [
+                        "Validate all mandatory namelist keys before running simulation."
+                    ],
+                    "anti_patterns": [
+                        "Do not generate simulation inputs without checking required cell and system parameters."
+                    ],
+                    "evidence_cases": [f"{case_id}:{fud_ref}"],
+                }
+            }
+        elif re.search(r"(?:window.*?yields|colleague|audit)", fail_text, re.IGNORECASE):
+            subtype = "task_understanding"
+            code = "AGENT_TASK_UNDERSTANDING"
+            summary = (
+                f"Agent misunderstood task specification or physical conventions "
+                f"(e.g. data fitting window): {fail_text[:200]}"
+            )
+            skill_prescription = {
+                "recommended_skill": {
+                    "name": "scientific-task-specification-audit",
+                    "trigger": ["Scientific audit or fitting window selection"],
+                    "capability_gap": [
+                        "Agent failed to align with task-specified fitting windows or norm conventions."
+                    ],
+                    "required_guidance": [
+                        "Follow exact specification ranges rather than baseline or colleague defaults."
+                    ],
+                    "anti_patterns": [
+                        "Do not use unverified legacy windows when prompt requests a specific range."
+                    ],
+                    "evidence_cases": [f"{case_id}:{fud_ref}"],
+                }
+            }
+        else:
+            subtype = "result_validation"
+            code = "AGENT_RESULT_VALIDATION"
+            summary = (
+                f"Agent wrote results.json without sanity validation, "
+                f"producing inaccurate physical/numerical values: {fail_text[:200]}"
+            )
+            skill_prescription = None
     else:
         ctx.trace.record(
             gate_id="gate6_agent_primary",
@@ -173,6 +307,9 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
             reason="no positive agent causal evidence matches subcases 5a-5e",
         )
         return None
+
+    counterfactual_supported = bool(ctx.sole_blocker)
+    cross_source = 1 if (sci_obs or signals or ctx.agent_timeline_events) else 0
 
     prc = attach_confidence_metadata(
         {
@@ -182,7 +319,10 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
             "summary": summary,
         },
         direct_causal_evidence=len(ev_refs),
-        cross_source_corroboration=1 if (sci_obs and signals) else 0,
+        cross_source_corroboration=cross_source,
+        counterfactual_supported=counterfactual_supported,
+        check_localization=ctx.check_localization,
+        hypothesis_separation=ctx.hypothesis_separation,
     )
     h1 = attach_confidence_metadata(
         {
@@ -196,7 +336,10 @@ def gate6_agent_primary(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
             "counterfactual_test": "Correct the agent's input script / workflow decision and run `verify.py`.",
         },
         direct_causal_evidence=len(ev_refs),
-        cross_source_corroboration=1 if (sci_obs and signals) else 0,
+        cross_source_corroboration=cross_source,
+        counterfactual_supported=counterfactual_supported,
+        check_localization=ctx.check_localization,
+        hypothesis_separation=ctx.hypothesis_separation,
     )
     h2 = attach_confidence_metadata(
         {

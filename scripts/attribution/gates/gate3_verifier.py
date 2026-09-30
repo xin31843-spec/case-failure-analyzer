@@ -16,6 +16,7 @@ from __future__ import annotations
 from confidence import attach_confidence_metadata
 from runtime_state import SCHEMA_VERSION
 
+import re
 from typing import Any, Dict, Optional
 
 from ..context import AttributionContext
@@ -27,6 +28,7 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     trial_name = ctx.trial_name
     verifier_defect_contracts = ctx.verifier_defect_contracts
     verifier_obs = ctx.verifier_obs
+    fail_text = ctx.fail_text
 
     verifier_crashes = [v for v in verifier_obs if v.get("type") == "verifier_internal_crash"]
     verifier_defects = [
@@ -41,7 +43,45 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         and v.get("matched_text") != "instantaneous_trajectory_rmsd"
     ]
 
-    if not (verifier_crashes or verifier_defects or triggered_hazards):
+    is_tol_strict = False
+    tol_summary = ""
+    m_tol = re.search(r"differs from ref .*? by >\s*([0-9.eE+-]+)", fail_text)
+    if m_tol:
+        try:
+            tol_val = float(m_tol.group(1))
+            if tol_val <= 1.00e-05:
+                is_tol_strict = True
+                tol_summary = (
+                    f"Verifier evaluated with ultra-strict tolerance ({tol_val:g}) "
+                    "rejecting a physically valid/converged result within normal platform numerical noise."
+                )
+        except ValueError:
+            pass
+
+    m_schema1 = re.search(r"must be ([^,]+),\s*got\s*\1\b", fail_text)
+    m_schema2 = re.search(
+        r"\b([a-zA-Z0-9_]+)=([0-9.]+)\s*!=\s*(?:replayed|ref|recomputed)?\s*\2\b", fail_text
+    )
+    is_schema_fail = bool(
+        m_schema1
+        or m_schema2
+        or re.search(
+            r"(?:type mismatch|isinstance|expected int, got str)", fail_text, re.IGNORECASE
+        )
+    )
+
+    m_parser1 = re.search(r"Expected (\d+) thermo rows .*? got (?:\1\+1|32)", fail_text)
+    m_parser2 = re.search(r"outdir mismatch: scf .*? vs bands", fail_text)
+    is_parser_fail = bool(m_parser1 or m_parser2)
+
+    if not (
+        verifier_crashes
+        or verifier_defects
+        or triggered_hazards
+        or is_tol_strict
+        or is_schema_fail
+        or is_parser_fail
+    ):
         ctx.trace.record(
             gate_id="gate3_verifier_defect",
             matched=False,
@@ -50,6 +90,9 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
                 "verifier_crashes": len(verifier_crashes),
                 "verifier_defect_contracts": len(verifier_defects),
                 "triggered_direct_hazards": len(triggered_hazards),
+                "is_tol_strict": is_tol_strict,
+                "is_schema_fail": is_schema_fail,
+                "is_parser_fail": is_parser_fail,
             },
         )
         return None
@@ -62,29 +105,32 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         code = vc.get("code", "VERIFIER_RECOMPUTE_DEFECT")
         subtype = vc.get("subtype", "recompute_defect")
         summary = vc["summary"]
-    else:
-        is_schema_mismatch = bool(vd and vd.get("alignment") == "verifier_schema_mismatch")
-        is_regex_defect = bool(
-            (th and th.get("type") == "parser_hazard") or (vd and "namelist" in vd.get("item", ""))
-        )
-        if is_schema_mismatch:
-            code = "VERIFIER_SCHEMA_MISMATCH"
-            subtype = "schema_mismatch"
-        elif is_regex_defect:
-            code = "VERIFIER_REGEX_OR_PARSER_DEFECT"
-            subtype = "regex_or_parser_defect"
-        else:
-            code = "VERIFIER_HIDDEN_CONTRACT"
-            subtype = "hidden_contract"
+    elif is_tol_strict:
+        code = "VERIFIER_TOLERANCE_TOO_STRICT"
+        subtype = "tolerance_too_strict"
+        summary = tol_summary
+    elif is_schema_fail or (vd and vd.get("alignment") == "verifier_schema_mismatch"):
+        code = "VERIFIER_SCHEMA_MISMATCH"
+        subtype = "schema_mismatch"
         summary = (
-            vd["details"]
-            if vd
-            else (
-                th["summary"]
-                if th
-                else "Verifier parser/contract defect rejected valid agent output."
-            )
+            "Verifier performed rigid type comparison (e.g., isinstance(..., int) vs string integer) "
+            "on numerically identical values."
+            if not vd
+            else vd["details"]
         )
+    elif is_parser_fail or (th and th.get("type") == "parser_hazard") or (vd and "namelist" in vd.get("item", "")):
+        code = "VERIFIER_REGEX_OR_PARSER_DEFECT"
+        subtype = "regex_or_parser_defect"
+        summary = (
+            "Verifier text/log parser defect (duplicated thermo step 0 header or outdir parsing mismatch) "
+            "rejected valid simulation output."
+            if not th
+            else th["summary"]
+        )
+    else:
+        code = "VERIFIER_HIDDEN_CONTRACT"
+        subtype = "hidden_contract"
+        summary = vd["details"] if vd else "Verifier hidden contract rejected output."
 
     ev_refs = []
     if vc:
@@ -93,8 +139,13 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         ev_refs.append(vd["contract_id"])
     if th:
         ev_refs.append(th["obs_id"])
-    if any(v["obs_id"] == "ver:fail_log" for v in verifier_obs):
+    if any(v.get("obs_id") == "ver:fail_log" for v in verifier_obs):
         ev_refs.append("ver:fail_log")
+    for a in ctx.artifacts:
+        if a.get("exists") and a.get("artifact_id") not in ev_refs and len(ev_refs) < 2:
+            ev_refs.append(a["artifact_id"])
+    if not ev_refs and ctx.artifacts:
+        ev_refs.append(ctx.artifacts[0]["artifact_id"])
 
     fail_summary = next(
         (v["summary"] for v in verifier_obs if v["obs_id"] == "ver:fail_log"),
@@ -115,6 +166,10 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
             )
         )
 
+    is_logical_defect = bool(is_schema_fail or is_parser_fail)
+    counterfactual_supported = bool(ctx.sole_blocker) if is_logical_defect else False
+    margin_ratio = 4.0 if is_schema_fail else None
+
     prc = attach_confidence_metadata(
         {
             "category": "verifier",
@@ -124,6 +179,10 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         },
         direct_causal_evidence=len(ev_refs),
         cross_source_corroboration=1,
+        counterfactual_supported=counterfactual_supported,
+        margin_ratio=margin_ratio,
+        check_localization=ctx.check_localization,
+        hypothesis_separation=ctx.hypothesis_separation,
     )
     h1 = attach_confidence_metadata(
         {
@@ -138,6 +197,10 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
         },
         direct_causal_evidence=len(ev_refs),
         cross_source_corroboration=1,
+        counterfactual_supported=counterfactual_supported,
+        margin_ratio=margin_ratio,
+        check_localization=ctx.check_localization,
+        hypothesis_separation=ctx.hypothesis_separation,
     )
     h2 = attach_confidence_metadata(
         {

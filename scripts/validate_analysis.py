@@ -98,6 +98,8 @@ def collect_valid_evidence_ids(evidence: Dict[str, Any]) -> Set[str]:
             ids.add(s["sci_id"])
         if s.get("source_ref"):
             ids.add(str(s["source_ref"]))
+        if s.get("agent_ref"):
+            ids.add(str(s["agent_ref"]))
     return ids
 
 
@@ -118,6 +120,16 @@ def collect_positive_agent_evidence_ids(evidence: Dict[str, Any]) -> Set[str]:
                 pos_ids.add(s["sci_id"])
             if s.get("source_ref"):
                 pos_ids.add(str(s["source_ref"]))
+        # A verifier recompute divergence corroborated against the agent's own reported
+        # value is positive agent evidence even though the observation originates in the
+        # verifier log: the observation binds the divergence to the agent's delivered metric.
+        if not s.get("recovered", False) and s.get("agent_reported_matches"):
+            if s.get("sci_id"):
+                pos_ids.add(s["sci_id"])
+            if s.get("source_ref"):
+                pos_ids.add(str(s["source_ref"]))
+            if s.get("agent_ref"):
+                pos_ids.add(str(s["agent_ref"]))
     return pos_ids
 
 

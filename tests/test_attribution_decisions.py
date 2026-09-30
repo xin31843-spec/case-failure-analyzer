@@ -38,7 +38,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from attribution.engine import GATE_ORDER, run_attribution_engine
 from attribution.schema import OUTCOME_KEYS, make_attribution
+from confidence import compute_evidence_confidence
 from discover_artifacts import discover_all
+from verify_check_stats import build_check_stats
 from analyze_case import analyze_single_trial
 from tests.archetype_builders import ARCHETYPES
 from validate_analysis import validate_all
@@ -136,6 +138,32 @@ def _contract(alignment: str, **kw: Any) -> Dict[str, Any]:
         "item": "Ge.UPF",
         "details": f"contract observation ({alignment})",
     }
+    base.update(kw)
+    return base
+
+
+def _recompute_divergence(**kw: Any) -> Dict[str, Any]:
+    """
+    Minimal `verifier_recompute_divergence` scientific observation per the
+    extraction-layer contract: the verifier independently recomputed a metric
+    the agent delivered and the values disagree, with an optional agent-side
+    trajectory self-report for corroboration.
+    """
+    base = _sci(
+        "verifier_recompute_divergence",
+        sci_id="sci:recompute_divergence:1",
+        matched_text="FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)",
+        metric="max_force",
+        reported_value=0.02863,
+        recomputed_value=0.03666,
+        tolerance=0.001,
+        check_kind="recompute_divergence",
+        agent_reported_value=0.02863,
+        agent_ref="trajectory:step:7",
+        agent_reported_matches=True,
+        source_ref="trajectory:step:7:tool:0",
+        discriminating=True,
+    )
     base.update(kw)
     return base
 
@@ -408,6 +436,209 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
             "not_gate_id": "gate4_numerical_divergence",
             "category": "unknown",
             "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+        },
+    ),
+    (
+        "gate4 deterministic recompute divergence with agent corroboration and contract binding",
+        _evidence(
+            contract_observations=[
+                _contract(
+                    "consistent",
+                    contract_id="contract:max_force",
+                    item="results.json:values.max_force",
+                )
+            ],
+            scientific_observations=[_recompute_divergence()],
+            verifier_observations=[
+                _fail_log("FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)")
+            ],
+            timeline=[_agent_event(event_id="trajectory:step:7")],
+        ),
+        {
+            "gate_id": "gate4_numerical_divergence",
+            "category": "agent",
+            "code": "AGENT_RESULT_VALIDATION",
+            "verdict": "failed",
+            "failure_stage": "agent_execution",
+        },
+    ),
+    (
+        "gate4 abstains on recompute divergence without agent corroboration (gate5 takes over)",
+        _evidence(
+            scientific_observations=[
+                _recompute_divergence(
+                    agent_reported_value=None,
+                    agent_ref=None,
+                    agent_reported_matches=False,
+                )
+            ],
+            verifier_observations=[
+                _fail_log("FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)")
+            ],
+        ),
+        {
+            "gate_id": "gate5_insufficient_positive_evidence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+            "verdict": "failed",
+            "failure_stage": "unknown",
+        },
+    ),
+    (
+        "gate4 abstains on a corroborated count_mismatch divergence",
+        _evidence(
+            contract_observations=[
+                _contract(
+                    "consistent",
+                    contract_id="contract:n_molecules",
+                    item="results.json:values.n_molecules",
+                )
+            ],
+            scientific_observations=[
+                _recompute_divergence(
+                    sci_id="sci:recompute_divergence:2",
+                    matched_text="FAIL: reported n_molecules 245 != recomputed 244 (tol 0)",
+                    metric="n_molecules",
+                    reported_value=245.0,
+                    recomputed_value=244.0,
+                    tolerance=0.0,
+                    check_kind="count_mismatch",
+                    source_ref="trajectory:step:5:tool:0",
+                )
+            ],
+            verifier_observations=[
+                _fail_log("FAIL: reported n_molecules 245 != recomputed 244 (tol 0)")
+            ],
+        ),
+        {
+            "gate_id": "gate5_insufficient_positive_evidence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+            "verdict": "failed",
+        },
+    ),
+    (
+        "gate4 abstains when the diverging metric cannot be bound to the task contract",
+        _evidence(
+            prompt_contract={"instruction_exists": True, "json_keys": ["energy"]},
+            scientific_observations=[_recompute_divergence()],
+            verifier_observations=[
+                _fail_log("FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)")
+            ],
+        ),
+        {
+            "gate_id": "gate5_insufficient_positive_evidence",
+            "category": "unknown",
+            "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+            "verdict": "failed",
+        },
+    ),
+    (
+        "gate4 recompute divergence binds via verifier_selfcheck when no instruction text is available",
+        _evidence(
+            scientific_observations=[
+                _recompute_divergence(
+                    sci_id="sci:recompute_divergence:3",
+                    matched_text="FAIL: fit_window reported 50 != reference 100",
+                    metric="fit_window",
+                    reported_value=50.0,
+                    recomputed_value=100.0,
+                    tolerance=0.0,
+                    check_kind="reference_mismatch",
+                    agent_ref="trajectory:step:4",
+                    source_ref="trajectory:step:4:tool:0",
+                )
+            ],
+            verifier_observations=[_fail_log("FAIL: fit_window reported 50 != reference 100")],
+            timeline=[_agent_event(event_id="trajectory:step:4")],
+        ),
+        {
+            "gate_id": "gate4_numerical_divergence",
+            "category": "agent",
+            "code": "AGENT_SCIENTIFIC_PARAMETER_SELECTION",
+            "verdict": "failed",
+            "failure_stage": "agent_execution",
+        },
+    ),
+    (
+        "gate4 ensemble path still matches when an uncorroborated recompute divergence is present",
+        _evidence(
+            contract_observations=[
+                {
+                    "contract_id": "contract:1",
+                    "item": "trajectory:instantaneous_rmsd",
+                    "alignment": "verifier_defect",
+                    "prompt_requirement": "ensemble_consistency",
+                    "verifier_requirement": "instantaneous_trajectory_rmsd",
+                    "agent_output_status": "ensemble_matches_trajectory_diverges",
+                    "details": "Verifier checked instantaneous trajectory rather than ensemble average",
+                }
+            ],
+            scientific_observations=[
+                _recompute_divergence(
+                    agent_reported_value=None,
+                    agent_ref=None,
+                    agent_reported_matches=False,
+                )
+            ],
+            verifier_observations=[
+                _fail_log(
+                    "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 "
+                    "(ensemble average matches)"
+                ),
+                {
+                    "obs_id": "ver:hazard:1",
+                    "type": "tolerance_hazard",
+                    "matched_text": "instantaneous_trajectory_rmsd",
+                    "triggered": True,
+                    "failure_binding": "direct",
+                    "summary": "instantaneous trajectory comparison",
+                },
+            ],
+        ),
+        {
+            "gate_id": "gate4_numerical_divergence",
+            "category": "verifier",
+            "code": "VERIFIER_TOLERANCE_TOO_STRICT",
+            "verdict": "failed",
+        },
+    ),
+    (
+        "precedence: corroborated recompute divergence wins over the ensemble path",
+        _evidence(
+            contract_observations=[
+                {
+                    "contract_id": "contract:1",
+                    "item": "trajectory:instantaneous_rmsd",
+                    "alignment": "verifier_defect",
+                    "prompt_requirement": "ensemble_consistency",
+                    "verifier_requirement": "instantaneous_trajectory_rmsd",
+                    "agent_output_status": "ensemble_matches_trajectory_diverges",
+                    "details": "Verifier checked instantaneous trajectory rather than ensemble average",
+                }
+            ],
+            scientific_observations=[_recompute_divergence()],
+            verifier_observations=[
+                _fail_log(
+                    "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 "
+                    "(ensemble average matches)"
+                ),
+                {
+                    "obs_id": "ver:hazard:1",
+                    "type": "tolerance_hazard",
+                    "matched_text": "instantaneous_trajectory_rmsd",
+                    "triggered": True,
+                    "failure_binding": "direct",
+                    "summary": "instantaneous trajectory comparison",
+                },
+            ],
+            timeline=[_agent_event(event_id="trajectory:step:7")],
+        ),
+        {
+            "gate_id": "gate4_numerical_divergence",
+            "category": "agent",
+            "code": "AGENT_RESULT_VALIDATION",
+            "verdict": "failed",
         },
     ),
     (
@@ -831,5 +1062,383 @@ class TestAgentAttributionTightening(unittest.TestCase):
         self.assertTrue(any("POSITIVE_AGENT_EVIDENCE" in e for e in errors), errors)
 
 
+class TestEnhancedAttributionGates(unittest.TestCase):
+    """Verify enhanced attribution for case ambiguity, verifier rules, and agent decisions."""
+
+    def test_case_ambiguous_contract_drift_sign(self) -> None:
+        ev = _evidence(
+            verifier_observations=[
+                _fail_log("FAIL: results.json cons_qty_drift -2.769e-06 != .ener drift 2.769e-06")
+            ],
+            artifacts=[{"artifact_id": "art:trial_result", "exists": True}],
+        )
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        self.assertEqual(an["primary_root_cause"]["category"], "case")
+        self.assertEqual(an["primary_root_cause"]["code"], "CASE_AMBIGUOUS_CONTRACT")
+        self.assertGreater(an["primary_root_cause"]["confidence"], 0.0)
+
+    def test_case_ambiguous_contract_clustering_and_rotatable_bonds(self) -> None:
+        for fail_msg in (
+            "FAIL: reported n_clusters=14 != re-clustered 16 from the submitted conformers",
+            "FAIL: n_rotatable_bonds reported 4 != recomputed 7",
+            "FAIL: results.json n_msd_rows=51 != log production rows 101",
+            "FAIL: final_pe=-5.1862444 differs from ref -5.2225305 by >0.001",
+        ):
+            with self.subTest(msg=fail_msg):
+                ev = _evidence(
+                    verifier_observations=[_fail_log(fail_msg)],
+                    artifacts=[{"artifact_id": "art:trial_result", "exists": True}],
+                )
+                an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+                self.assertEqual(an["primary_root_cause"]["category"], "case")
+                self.assertEqual(an["primary_root_cause"]["code"], "CASE_AMBIGUOUS_CONTRACT")
+                self.assertGreater(an["primary_root_cause"]["confidence"], 0.0)
+
+    def test_verifier_ultra_strict_tolerance(self) -> None:
+        ev = _evidence(
+            verifier_observations=[
+                _fail_log(
+                    "FAIL: final energy -0.02125869 eV differs from ref -0.02104561 by > 1.00e-06"
+                )
+            ],
+            artifacts=[{"artifact_id": "art:trial_result", "exists": True}],
+        )
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        self.assertEqual(an["primary_root_cause"]["category"], "verifier")
+        self.assertEqual(an["primary_root_cause"]["code"], "VERIFIER_TOLERANCE_TOO_STRICT")
+        self.assertGreater(an["primary_root_cause"]["confidence"], 0.0)
+
+    def test_verifier_schema_mismatch_string_int(self) -> None:
+        for fail_msg in (
+            "FAIL: results.json n_rdf_bins must be 100, got 100",
+            "FAIL: n_input=12 != replayed 12",
+        ):
+            with self.subTest(msg=fail_msg):
+                ev = _evidence(
+                    verifier_observations=[_fail_log(fail_msg)],
+                    artifacts=[{"artifact_id": "art:trial_result", "exists": True}],
+                )
+                an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+                self.assertEqual(an["primary_root_cause"]["category"], "verifier")
+                self.assertEqual(an["primary_root_cause"]["code"], "VERIFIER_SCHEMA_MISMATCH")
+                self.assertGreater(an["primary_root_cause"]["confidence"], 0.0)
+
+    def test_agent_method_and_parameter_selection(self) -> None:
+        sig = {
+            "signal_id": "sig:asset_mod:1",
+            "signal_type": "asset_modified",
+            "description": "Agent modified input",
+            "event_ref": "traj:step:1",
+        }
+        cases = [
+            (
+                "FAIL: final.inp does not enable a spin-polarized (UKS/LSD) calculation",
+                "AGENT_SCIENTIFIC_METHOD_SELECTION",
+                True,
+            ),
+            (
+                "FAIL: fixed.in timestep 0.015 is too large for LJ fluid",
+                "AGENT_SCIENTIFIC_PARAMETER_SELECTION",
+                True,
+            ),
+            (
+                "FAIL: phi=0: pw.in missing celldm(1)",
+                "AGENT_TOOL_USE",
+                True,
+            ),
+            (
+                "FAIL: D = 5.7080e-05 cm^2/s matches a correct-factor fit over the colleague's 100-500 ps window",
+                "AGENT_TASK_UNDERSTANDING",
+                True,
+            ),
+            (
+                "FAIL: methanol_szv.out geometry does not match the pinned asset geometry",
+                "AGENT_PLANNING",
+                True,
+            ),
+        ]
+        for fail_msg, expected_code, has_prescription in cases:
+            with self.subTest(code=expected_code):
+                ev = _evidence(
+                    behavioral_signals=[sig],
+                    verifier_observations=[_fail_log(fail_msg)],
+                    artifacts=[{"artifact_id": "art:trial_result", "exists": True}],
+                )
+                an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+                self.assertEqual(an["primary_root_cause"]["category"], "agent")
+                self.assertEqual(an["primary_root_cause"]["code"], expected_code)
+                self.assertGreater(an["primary_root_cause"]["confidence"], 0.0)
+                if has_prescription:
+                    self.assertIsNotNone(an["skill_prescription"])
+
+
+class TestGate4RecomputeDivergencePath(unittest.TestCase):
+    """
+    Pins the deterministic verifier-recompute-divergence path added to Gate 4:
+    the verifier independently recomputed a metric the agent delivered, the
+    agent's own trajectory self-report matches the reported value, and the
+    metric binds to the task contract.
+    """
+
+    def _matched_evidence(self) -> Dict[str, Any]:
+        # `missing_artifacts` is only needed so the fixture is complete enough
+        # for `validate_all`; no gate consumes it.
+        return _evidence(
+            missing_artifacts=[],
+            contract_observations=[
+                _contract(
+                    "consistent",
+                    contract_id="contract:max_force",
+                    item="results.json:values.max_force",
+                )
+            ],
+            scientific_observations=[_recompute_divergence()],
+            verifier_observations=[
+                _fail_log("FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)")
+            ],
+            timeline=[_agent_event(event_id="trajectory:step:7")],
+        )
+
+    def test_confidence_is_computed_by_compute_evidence_confidence(self) -> None:
+        an = run_attribution_engine(self._matched_evidence(), {"candidate_hypotheses": []})
+        prc = an["primary_root_cause"]
+        # The fixture's divergence margin: |0.02863 - 0.03666| / 0.001 ≈ 8.03,
+        # which crosses the ≥4 band (+2 points) and expands the denominator.
+        margin_ratio = abs(0.02863 - 0.03666) / 0.001
+        expected, kind, _strength = compute_evidence_confidence(
+            direct_causal_evidence=3,
+            cross_source_corroboration=1,
+            counterfactual_supported=False,
+            single_keyword_only=False,
+            missing_discriminating_evidence=0,
+            contradicting_evidence=0,
+            margin_ratio=margin_ratio,
+        )
+        self.assertEqual(prc["confidence"], expected)
+        self.assertEqual(prc["confidence"], 0.75)
+        self.assertEqual(prc["confidence_kind"], kind)
+
+    def test_evidence_refs_cite_divergence_fail_log_and_agent_ref(self) -> None:
+        an = run_attribution_engine(self._matched_evidence(), {"candidate_hypotheses": []})
+        self.assertEqual(
+            an["evidence_refs"],
+            ["sci:recompute_divergence:1", "ver:fail_log", "trajectory:step:7"],
+        )
+
+    def test_trace_checks_carry_divergence_counts_and_binding(self) -> None:
+        an = run_attribution_engine(self._matched_evidence(), {"candidate_hypotheses": []})
+        g4 = next(
+            e
+            for e in an["decision_trace"]["evaluated"]
+            if e["gate_id"] == "gate4_numerical_divergence"
+        )
+        self.assertTrue(g4["matched"])
+        self.assertEqual(g4["checks"]["has_recompute_divergence"], True)
+        self.assertEqual(g4["checks"]["agent_corroborated_count"], 1)
+        self.assertEqual(g4["checks"]["contract_binding"], "contract_observations")
+
+    def test_abstain_trace_carries_divergence_counts(self) -> None:
+        ev = _evidence(
+            scientific_observations=[
+                _recompute_divergence(
+                    agent_reported_value=None,
+                    agent_ref=None,
+                    agent_reported_matches=False,
+                )
+            ],
+            verifier_observations=[
+                _fail_log("FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)")
+            ],
+        )
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        self.assertEqual(
+            an["decision_trace"]["selected"]["gate_id"],
+            "gate5_insufficient_positive_evidence",
+        )
+        g4 = next(
+            e
+            for e in an["decision_trace"]["evaluated"]
+            if e["gate_id"] == "gate4_numerical_divergence"
+        )
+        self.assertFalse(g4["matched"])
+        self.assertEqual(g4["checks"]["recompute_divergence_count"], 1)
+        self.assertEqual(g4["checks"]["agent_corroborated_count"], 0)
+
+    def test_validator_accepts_the_new_agent_attribution(self) -> None:
+        ev = self._matched_evidence()
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        ok, errors = validate_all(ev, an, None)
+        self.assertTrue(ok, errors)
+
+
+class TestConfidenceUpgradeWiring(unittest.TestCase):
+    """
+    Pins the confidence-upgrade wiring: the case-specific measurements
+    (`margin_ratio`, `check_localization`, `hypothesis_separation`) must flow
+    from the evidence / candidate hypotheses through `AttributionContext` into
+    the Gate 4 agent-path and Gate 6 confidence calls, and their absence must
+    reproduce the legacy scores exactly.
+    """
+
+    #: |0.02863 - 0.03666| / 0.001 ≈ 8.03 → crosses the ≥4 band (+2 points).
+    FIXTURE_MARGIN_RATIO = abs(0.02863 - 0.03666) / 0.001
+
+    def _gate4_agent_evidence(self) -> Dict[str, Any]:
+        return _evidence(
+            missing_artifacts=[],
+            contract_observations=[
+                _contract(
+                    "consistent",
+                    contract_id="contract:max_force",
+                    item="results.json:values.max_force",
+                )
+            ],
+            scientific_observations=[_recompute_divergence()],
+            verifier_observations=[
+                _fail_log("FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)")
+            ],
+            timeline=[_agent_event(event_id="trajectory:step:7")],
+        )
+
+    # (i) margin_ratio ≥ 4 lifts the Gate 4 agent score above the no-margin
+    # score of the same fixture (base 4 points + margin 2 → 6/8 = 0.75).
+    def test_gate4_margin_ratio_raises_confidence(self) -> None:
+        an = run_attribution_engine(self._gate4_agent_evidence(), {"candidate_hypotheses": []})
+        prc = an["primary_root_cause"]
+        self.assertEqual(prc["code"], "AGENT_RESULT_VALIDATION")
+        expected, kind, strength = compute_evidence_confidence(
+            direct_causal_evidence=3,
+            cross_source_corroboration=1,
+            margin_ratio=self.FIXTURE_MARGIN_RATIO,
+        )
+        self.assertEqual(prc["confidence"], expected)
+        self.assertEqual(prc["confidence"], 0.75)
+        self.assertEqual(prc["confidence_kind"], kind)
+        self.assertEqual(prc["evidence_strength"], strength)
+        legacy, _, _ = compute_evidence_confidence(
+            direct_causal_evidence=3, cross_source_corroboration=1
+        )
+        self.assertGreater(prc["confidence"], legacy)
+
+    # (ii) check_localization="single" whose unique failing check contains the
+    # diverging metric name turns the counterfactual on and lifts the score
+    # above the margin-only variant. The stats dict is built by the real
+    # `build_check_stats` from a log with per-check pass markers (a fail-fast
+    # log with a lone FAIL line never sets `single_failure`).
+    def test_gate4_single_failure_counterfactual_raises_confidence_further(self) -> None:
+        ev = self._gate4_agent_evidence()
+        ev["verifier_check_stats"] = build_check_stats(
+            "PASS: results.json exists\n"
+            "FAIL: reported max_force 0.02863 != recomputed 0.03666 (tol 0.001)\n"
+        )
+        self.assertTrue(ev["verifier_check_stats"]["single_failure"])
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        prc = an["primary_root_cause"]
+        expected, _, _ = compute_evidence_confidence(
+            direct_causal_evidence=3,
+            cross_source_corroboration=1,
+            counterfactual_supported=True,
+            margin_ratio=self.FIXTURE_MARGIN_RATIO,
+            check_localization="single",
+        )
+        self.assertEqual(prc["confidence"], expected)
+        self.assertEqual(prc["evidence_strength"], "high")
+        self.assertGreater(prc["confidence"], 0.75)
+
+    def test_gate4_counterfactual_stays_off_when_single_failure_is_unrelated(self) -> None:
+        """A single failing check that does not name the diverging metric must
+        NOT enable the counterfactual bonus (replacing the value would not fix
+        that check)."""
+        ev = self._gate4_agent_evidence()
+        ev["verifier_check_stats"] = build_check_stats(
+            "PASS: results.json exists\nFAIL: results.json missing key 'n_rows'\n"
+        )
+        an = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        prc = an["primary_root_cause"]
+        expected, _, _ = compute_evidence_confidence(
+            direct_causal_evidence=3,
+            cross_source_corroboration=1,
+            counterfactual_supported=False,
+            margin_ratio=self.FIXTURE_MARGIN_RATIO,
+            check_localization="single",
+        )
+        self.assertEqual(prc["confidence"], expected)
+
+    # (iii) hypothesis_separation ≥ 0.6 lifts the Gate 6 agent score.
+    def test_gate6_hypothesis_separation_raises_confidence(self) -> None:
+        ev = _evidence(
+            scientific_observations=[_sci("scf_convergence_not_achieved")],
+            behavioral_signals=[_sig("repeated_failed_action")],
+            verifier_observations=[_fail_log("FAIL: SCF not converged")],
+        )
+        legacy = run_attribution_engine(ev, {"candidate_hypotheses": []})
+        self.assertEqual(legacy["primary_root_cause"]["confidence"], 0.67)
+
+        top1, top2 = 0.83, 0.17
+        separation = (top1 - top2) / top1  # ≈ 0.795 ≥ 0.6 → +1 point
+        hyps = {
+            "candidate_hypotheses": [
+                {"hypothesis_id": "H1", "category": "agent", "confidence": top1},
+                {"hypothesis_id": "H2", "category": "verifier", "confidence": top2},
+            ]
+        }
+        an = run_attribution_engine(ev, hyps)
+        self.assertEqual(
+            an["decision_trace"]["selected"]["gate_id"], "gate6_agent_primary"
+        )
+        expected, kind, _ = compute_evidence_confidence(
+            direct_causal_evidence=3,
+            cross_source_corroboration=1,
+            hypothesis_separation=separation,
+        )
+        self.assertEqual(an["primary_root_cause"]["confidence"], expected)
+        self.assertEqual(an["primary_root_cause"]["confidence_kind"], kind)
+        self.assertGreater(
+            an["primary_root_cause"]["confidence"],
+            legacy["primary_root_cause"]["confidence"],
+        )
+
+    # (iv) regression: with all three new signals absent the scores are
+    # byte-identical to the legacy algorithm (4/6 = 0.67).
+    def test_absent_new_signals_reproduce_legacy_scores(self) -> None:
+        # Gate 4 agent path where margin_ratio is unmeasurable (tolerance 0),
+        # no `verifier_check_stats`, and no candidate hypotheses.
+        ev4 = _evidence(
+            scientific_observations=[
+                _recompute_divergence(
+                    sci_id="sci:recompute_divergence:3",
+                    matched_text="FAIL: fit_window reported 50 != reference 100",
+                    metric="fit_window",
+                    reported_value=50.0,
+                    recomputed_value=100.0,
+                    tolerance=0.0,
+                    check_kind="reference_mismatch",
+                    agent_ref="trajectory:step:4",
+                    source_ref="trajectory:step:4:tool:0",
+                )
+            ],
+            verifier_observations=[_fail_log("FAIL: fit_window reported 50 != reference 100")],
+            timeline=[_agent_event(event_id="trajectory:step:4")],
+        )
+        an4 = run_attribution_engine(ev4, {"candidate_hypotheses": []})
+        expected4, _, _ = compute_evidence_confidence(
+            direct_causal_evidence=3, cross_source_corroboration=1
+        )
+        self.assertEqual(
+            an4["primary_root_cause"]["code"], "AGENT_SCIENTIFIC_PARAMETER_SELECTION"
+        )
+        self.assertEqual(an4["primary_root_cause"]["confidence"], expected4)
+        self.assertEqual(an4["primary_root_cause"]["confidence"], 0.67)
+
+        ev6 = _evidence(
+            scientific_observations=[_sci("scf_convergence_not_achieved")],
+            behavioral_signals=[_sig("repeated_failed_action")],
+            verifier_observations=[_fail_log("FAIL: SCF not converged")],
+        )
+        an6 = run_attribution_engine(ev6, {"candidate_hypotheses": []})
+        self.assertEqual(an6["primary_root_cause"]["confidence"], 0.67)
+
+
 if __name__ == "__main__":
     unittest.main()
+
