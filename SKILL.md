@@ -5,7 +5,7 @@ metadata:
   short-description: Audit scientific benchmark case failures across 4 peer categories with concise reports
 ---
 
-# Case Failure Analyzer
+# case failure analyzer
 
 Use this skill when asked to diagnose why a scientific-computing benchmark case (`jobs/<job_name>` + `tasks/<task_name>`) failed.
 
@@ -34,7 +34,7 @@ Require or discover:
 - **Deterministic Evidence Extraction + Model Causal Reasoning**: Deterministic scripts extract `evidence.json` and `candidate-hypotheses.json`; the Agent evaluates competing hypotheses per `references/attribution-protocol.md` (or validates the conservative draft in `analysis.json`).
 - **Evidence-first attribution**: Never assigns a root cause from a single keyword match. Separates **failure manifestation (symptom)**, **detection stage**, and **primary root cause**.
 - **Closed-Loop Three-Way Verification**: Numerical and parser defects require closed-loop corroboration between `instruction.md` (Prompt), `tests/verify.py` (Verifier rules), and runtime logs (`verify.log`). If `instruction.md` is missing, or if verifier trajectory keywords exist only in comments, docstrings, assertion error messages (`node.msg`), or membership checks rather than executable condition/comparison AST logic, or if prompt mandates exact pointwise trajectory, or if runtime failures are non-numerical (e.g. missing output files or KeyErrors), numerical claims abstain conservatively to `unknown`.
-- **Causal Precedence Timeline vs Gate Evaluation**: Enforces strict chronological causality: `Infra (pre-startup)` ➔ `Case (missing assets/setup defect)` ➔ `Verifier (internal crash/defect)` ➔ `Agent (positive deviation)`. The deterministic evaluation order (Gates 1 through 7) enforces this timeline and ensures isolated verifier crashes strictly attribute to `verifier` (`VERIFIER_RECOMPUTE_DEFECT`) and forbid `agent` or `unknown`.
+- **Causal Precedence Timeline vs Gate Evaluation**: Enforces strict chronological causality: `Infra (pre-startup)` ➔ `Case (missing assets/setup defect)` ➔ `Verifier (internal crash/defect)` ➔ `Agent (positive deviation)`. The deterministic evaluation order (the gate sequence `gate0`–`gate6`, 8 decision ids) enforces this timeline and ensures isolated verifier crashes strictly attribute to `verifier` (`VERIFIER_RECOMPUTE_DEFECT`) and forbid `agent` or `unknown`.
 - **Positive-evidence gate for Agent blame**: Never defaults to `agent` when other gates do not fire. Requires positive agent causal evidence (`behavioral_signals`, `agent_mismatch` contract, or unrecovered trajectory scientific errors tied to agent decisions). Ordinary trajectory events or unexplained verifier mismatches converge to `unknown`.
 - **Calibrated uncertainty**: Outputs `unknown` (`UNKNOWN_INSUFFICIENT_EVIDENCE`) when evidence cannot distinguish competing hypotheses.
 - **Concise Bilingual Report Output**: Always produces concise Chinese-English bilingual `report.md` (along with standalone `report.zh.md` and `report.en.md`, plus bilingual `skill-prescription.md` when eligible).
@@ -48,6 +48,7 @@ Require or discover:
 - Invalid inputs (missing `--job` or `--output`, non-existent or non-directory `--job`/`--task`, non-writable or file `--output`, unknown `--trial`, path overlap between `--output` and `--job`/`--task`, empty job tree without job-level evidence) exit with code `2` with structured error messages and write nothing.
 - `analysis.json` carries an optional `decision_trace` recording which gate was evaluated, why each abstained, and which one was selected. It is additive and never required: a hand-authored or model-written `analysis.json` validates without one.
 - `evidence.json` carries an optional `diagnostics` list recording any recovery that degraded evidence (an unparseable `tests/verify.py` or `verifier/reward.txt`). A non-empty list means some conclusion rests on less than the artifacts appear to show; the same records are printed to stderr.
+- Additional CLI options: `--replay` (`none|verifier|safe`, default `none`; only `none` is supported for static read-only analysis), `--max-log-bytes` (maximum bytes per log file read, default `120000`), `--include-session-files` (flag to include agent session files in the inventory), and `--format` (`json|markdown|both`, default `both`).
 
 ### Attribution Internals
 
@@ -60,7 +61,9 @@ Gate order is load-bearing and is pinned by tests — do not reorder gates or co
 1. **Run Evidence Collection & Candidate Hypothesis Generation**
    Execute `scripts/analyze_case.py` (supports `--phase collect` for evidence + candidate hypotheses, or `--phase all` for end-to-end conservative attribution and bilingual report generation):
    ```bash
-   python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyze_case.py" \
+   SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+   [ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+   python3 "$SKILL_DIR/scripts/analyze_case.py" \
      --job jobs/<job_name> \
      --task tasks/<task_name> \
      --output failure-analysis/<case_id>
@@ -88,13 +91,15 @@ Gate order is load-bearing and is pinned by tests — do not reorder gates or co
 model-authored attribution, write or edit `analysis.json` by hand, then validate JSON, render reports, and validate the rendered output:
 
 ```bash
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+[ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
 # Step 1: Validate structural constraints & machine-checked hard rules on analysis.json
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/validate_analysis.py" \
+python3 "$SKILL_DIR/scripts/validate_analysis.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
   --analysis failure-analysis/<case_id>/analysis.json
 
 # Step 2: Render bilingual report and skill prescription
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/render_report.py" \
+python3 "$SKILL_DIR/scripts/render_report.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
   --analysis failure-analysis/<case_id>/analysis.json \
   --output-report failure-analysis/<case_id>/report.md \
@@ -102,7 +107,7 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/render
   --lang bilingual
 
 # Step 3: Validate the rendered report structure
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/validate_analysis.py" \
+python3 "$SKILL_DIR/scripts/validate_analysis.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
   --analysis failure-analysis/<case_id>/analysis.json \
   --report  failure-analysis/<case_id>/report.md

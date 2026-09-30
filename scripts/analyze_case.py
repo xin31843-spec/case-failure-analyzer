@@ -789,7 +789,7 @@ def compute_batch_statistics(summary_rows: List[Dict[str, Any]]) -> Dict[str, An
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Analyze scientific-computing benchmark case failures (Case Failure Analyzer)."
+        description="Analyze scientific-computing benchmark case failures (case failure analyzer)."
     )
     parser.add_argument("--job", required=True, type=Path, help="Job or trial directory path")
     parser.add_argument(

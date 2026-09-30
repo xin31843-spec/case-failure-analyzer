@@ -1,4 +1,4 @@
-# Case Failure Analyzer（科学计算基准用例失败因果分析器）
+# case failure analyzer（科学计算基准用例失败因果分析器）
 
 **[English](README.md) | [简体中文](README.zh.md)**
 
@@ -38,6 +38,41 @@ Schema 与硬规则校验器 (validate_analysis.py)
 中英双语审计报告渲染 (render_report.py -> report.md, report.zh.md, report.en.md, skill-prescription.md)
 ```
 
+### 仓库结构
+
+git 跟踪的仓库结构及各目录一句话简注如下：
+
+```text
+case-failure-analyzer/
+├── .gitignore                   # 本地产物与构建缓存的排除规则
+├── SKILL.md                     # Skill 入口与运行时契约（面向 Agent，仅英文）
+├── README.md / README.zh.md     # 项目概览与命令行用法（英文 | 简体中文双语）
+├── Makefile                     # 工程化入口：test、lint、smoke、check-docs、clean
+├── pyproject.toml               # 包元数据与可选 [dev] 依赖
+├── agents/
+│   └── openai.yaml              # codex 运行时接口元数据
+├── docs/
+│   ├── en/                      # references/ 的人类可读英文镜像（由 make check-docs 守护）
+│   └── zh/                      # references/ 的人类可读中文镜像
+├── references/                  # Agent 读取文档的唯一真相源
+│   ├── *.md                     # taxonomy、归因协议、evidence/report schema、处方策略
+│   ├── error-families.json      # 科学计算与 MLIP 套件统一 error-family 注册表
+│   └── software/                # 11 个分软件知识库（cp2k、vasp-abacus、lammps、mlip 等）
+├── scripts/                     # 确定性证据流水线与报告渲染
+│   ├── analyze_case.py          # CLI 入口：collect -> attribute -> render
+│   ├── validate_analysis.py     # Schema 与硬规则校验器
+│   ├── render_report.py         # 双语报告与技能处方渲染器
+│   ├── *.py                     # 证据模块：产物发现、运行态、轨迹标准化、契约审计、
+│   │                            #   科学错误提取、假设生成等
+│   └── attribution/             # 因果归因引擎（engine.py、schema.py、context.py 等）
+│       └── gates/               # 每个门一个模块，按固定顺序求值（gate0..gate6）
+└── tests/                       # unittest 测试套件：python3 -m unittest discover -s tests -t .
+    ├── fixtures/                # 已提交 fixture：归因基线与回归作业
+    └── test_*.py                # 单元、决策表与特征化测试
+```
+
+`.venv/`、`.zcode/`、`.zcodeignore`、`__pycache__/`、`*.egg-info/`、`.ruff_cache/`、`failure-analysis/` 为本地构建/运行/IDE 产物，已被 `.gitignore` 排除。
+
 ---
 
 ## 使用方法
@@ -47,7 +82,9 @@ Schema 与硬规则校验器 (validate_analysis.py)
 ### 1. 全流程归因与中英双版报告生成
 
 ```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyze_case.py" \
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+[ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+python3 "$SKILL_DIR/scripts/analyze_case.py" \
   --job jobs/<job_name> \
   --task tasks/<task_name> \
   --output failure-analysis/<case_id>
@@ -65,7 +102,9 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyz
 ### 2. 仅执行证据采集与候选假设生成 (`--phase collect`)
 
 ```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyze_case.py" \
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+[ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+python3 "$SKILL_DIR/scripts/analyze_case.py" \
   --job jobs/<job_name> \
   --task tasks/<task_name> \
   --output failure-analysis/<case_id> \
@@ -77,12 +116,14 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyz
 `--phase all` 默认产出保守的确定性归因草稿。如需提交由模型编写或修订的归因结论，请先执行校验再渲染报告：
 
 ```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/validate_analysis.py" \
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+[ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+python3 "$SKILL_DIR/scripts/validate_analysis.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
   --analysis failure-analysis/<case_id>/analysis.json \
   --report  failure-analysis/<case_id>/report.md
 
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/render_report.py" \
+python3 "$SKILL_DIR/scripts/render_report.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
   --analysis failure-analysis/<case_id>/analysis.json \
   --output-report failure-analysis/<case_id>/report.md \

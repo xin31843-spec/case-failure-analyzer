@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+.venv/
+.zcode/
+.zcodeignore
 failure-analysis/
 uv.lock
 

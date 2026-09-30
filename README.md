@@ -1,4 +1,4 @@
-# Case Failure Analyzer
+# case failure analyzer
 
 **[English](README.md) | [简体中文](README.zh.md)**
 
@@ -38,6 +38,41 @@ Schema & Invariant Validator (validate_analysis.py)
 Bilingual Reports (render_report.py -> report.md, report.zh.md, report.en.md, skill-prescription.md)
 ```
 
+### Repository Layout
+
+The git-tracked repository layout, with a one-line note per directory:
+
+```text
+case-failure-analyzer/
+├── .gitignore                   # Local-artifact and build-cache exclusions
+├── SKILL.md                     # Skill entrypoint & runtime contract (agent-facing, English only)
+├── README.md / README.zh.md     # Project overview & CLI usage (bilingual EN | 简体中文)
+├── Makefile                     # Engineering entrypoints: test, lint, smoke, check-docs, clean
+├── pyproject.toml               # Package metadata and optional [dev] extras
+├── agents/
+│   └── openai.yaml              # codex runtime interface metadata
+├── docs/
+│   ├── en/                      # Human-readable English mirror of references/ (guarded by make check-docs)
+│   └── zh/                      # Human-readable Chinese mirror of references/
+├── references/                  # Single source of truth for agent-consumed documents
+│   ├── *.md                     # taxonomy, attribution protocol, evidence/report schemas, prescription policy
+│   ├── error-families.json      # Unified error-family registry for scientific-computing & MLIP suites
+│   └── software/                # 11 per-software knowledge bases (cp2k, vasp-abacus, lammps, mlip, ...)
+├── scripts/                     # Deterministic evidence pipeline & reporting
+│   ├── analyze_case.py          # CLI entrypoint: collect -> attribute -> render
+│   ├── validate_analysis.py     # Schema & invariant validator (hard rules)
+│   ├── render_report.py         # Bilingual report & skill-prescription renderer
+│   ├── *.py                     # Evidence modules: artifact discovery, runtime state, trajectory
+│   │                            #   normalization, contract audit, scientific errors, hypotheses
+│   └── attribution/             # Causal attribution engine (engine.py, schema.py, context.py, ...)
+│       └── gates/               # One gate per module, evaluated in fixed order (gate0..gate6)
+└── tests/                       # unittest suite: python3 -m unittest discover -s tests -t .
+    ├── fixtures/                # Committed fixtures: attribution baselines & regression job
+    └── test_*.py                # Unit, decision-table & characterization tests
+```
+
+`.venv/`, `.zcode/`, `.zcodeignore`, `__pycache__/`, `*.egg-info/`, `.ruff_cache/`, and `failure-analysis/` are local build/run/IDE artifacts excluded by `.gitignore`.
+
 ---
 
 ## Usage
@@ -47,7 +82,9 @@ All commands use the skill-relative entrypoint. Running from inside the skill fo
 ### 1. Full End-to-End Analysis & Bilingual Report Generation
 
 ```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyze_case.py" \
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+[ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+python3 "$SKILL_DIR/scripts/analyze_case.py" \
   --job jobs/<job_name> \
   --task tasks/<task_name> \
   --output failure-analysis/<case_id>
@@ -66,7 +103,9 @@ Outputs generated in `failure-analysis/<case_id>/`:
 ### 2. Evidence & Candidate Hypothesis Collection Only (`--phase collect`)
 
 ```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyze_case.py" \
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+[ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+python3 "$SKILL_DIR/scripts/analyze_case.py" \
   --job jobs/<job_name> \
   --task tasks/<task_name> \
   --output failure-analysis/<case_id> \
@@ -78,12 +117,14 @@ python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyz
 `--phase all` emits a conservative deterministic draft. To submit a model-authored attribution, validate then render it:
 
 ```bash
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/validate_analysis.py" \
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+[ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+python3 "$SKILL_DIR/scripts/validate_analysis.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
   --analysis failure-analysis/<case_id>/analysis.json \
   --report  failure-analysis/<case_id>/report.md
 
-python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/render_report.py" \
+python3 "$SKILL_DIR/scripts/render_report.py" \
   --evidence failure-analysis/<case_id>/evidence.json \
   --analysis failure-analysis/<case_id>/analysis.json \
   --output-report failure-analysis/<case_id>/report.md \

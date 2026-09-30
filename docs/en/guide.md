@@ -1,4 +1,4 @@
-# Case Failure Analyzer — System Guide & Workflow Specification
+# case failure analyzer — System Guide & Workflow Specification
 
 **[English](guide.md) | [简体中文](../zh/guide.md)**
 
@@ -36,7 +36,9 @@ Require or automatically discover:
 1. **Run Evidence Collection & Candidate Hypothesis Generation**
    Execute `scripts/analyze_case.py` (supports `--phase collect` for evidence + candidate hypotheses, or `--phase all` for end-to-end conservative attribution and bilingual report generation):
    ```bash
-   python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyze_case.py" \
+   SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+   [ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+   python3 "$SKILL_DIR/scripts/analyze_case.py" \
      --job jobs/<job_name> \
      --task tasks/<task_name> \
      --output failure-analysis/<case_id>

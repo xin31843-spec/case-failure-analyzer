@@ -1,4 +1,4 @@
-# Case Failure Analyzer — 系统工作流与归因总规范
+# case failure analyzer — 系统工作流与归因总规范
 
 **[English](../en/guide.md) | [简体中文](guide.md)**
 
@@ -35,7 +35,9 @@
 1. **运行产物收集与候选假设生成**
    执行 `scripts/analyze_case.py`（支持 `--phase collect` 仅生成证据与候选假设，或默认 `--phase all` 完成全流程分析与中英双版报告渲染）：
    ```bash
-   python3 "${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer/scripts/analyze_case.py" \
+   SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
+   [ -d "$SKILL_DIR" ] || SKILL_DIR="$HOME/.agents/skills/case-failure-analyzer"
+   python3 "$SKILL_DIR/scripts/analyze_case.py" \
      --job jobs/<job_name> \
      --task tasks/<task_name> \
      --output failure-analysis/<case_id>
