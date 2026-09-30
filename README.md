@@ -71,7 +71,7 @@ case-failure-analyzer/
     └── test_*.py                # Unit, decision-table & characterization tests
 ```
 
-`.venv/`, `.zcode/`, `.zcodeignore`, `__pycache__/`, `*.egg-info/`, `.ruff_cache/`, and `failure-analysis/` are local build/run/IDE artifacts excluded by `.gitignore`.
+`.venv/`, `__pycache__/`, `*.egg-info/`, `.ruff_cache/`, and `failure-analysis/` are local build/run/IDE artifacts excluded by `.gitignore`.
 
 ---
 
@@ -171,7 +171,7 @@ python3 -m pytest -q          # only after `make dev`
 
 `evidence.json` carries an optional `diagnostics` list. A non-empty list means some recoverable failure degraded the evidence — for example an unparseable `tests/verify.py`, which leaves the verifier looking clean because no AST-derived parser hazards could be collected. The same records are printed to stderr as one JSON line each (`ANALYSIS DIAGNOSTIC: {...}`); stdout and exit codes are unaffected.
 
-### Architecture
+### Attribution Architecture
 
 The causal decision lives in `scripts/attribution/` as one function per gate, run in a fixed order by `engine.py`:
 

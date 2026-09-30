@@ -71,7 +71,7 @@ case-failure-analyzer/
     └── test_*.py                # 单元、决策表与特征化测试
 ```
 
-`.venv/`、`.zcode/`、`.zcodeignore`、`__pycache__/`、`*.egg-info/`、`.ruff_cache/`、`failure-analysis/` 为本地构建/运行/IDE 产物，已被 `.gitignore` 排除。
+`.venv/`、`__pycache__/`、`*.egg-info/`、`.ruff_cache/`、`failure-analysis/` 为本地构建/运行/IDE 产物，已被 `.gitignore` 排除。
 
 ---
 

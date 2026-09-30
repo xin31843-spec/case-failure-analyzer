@@ -33,7 +33,7 @@ format: ## Format codebase with ruff
 format-check: ## Check codebase formatting with ruff without writing changes
 	$(RUFF) format --check .
 
-check-docs: ## Verify docs/en mirrors match references/ (top language-switch header allowed)
+check-docs: ## Verify docs/en mirrors match references/ and guide docs (en|zh) integrity
 	@drift=""; \
 	tmp_ref=$$(mktemp); tmp_en=$$(mktemp); \
 	trap 'rm -f "$$tmp_ref" "$$tmp_en"' EXIT; \
@@ -58,7 +58,22 @@ check-docs: ## Verify docs/en mirrors match references/ (top language-switch hea
 		echo "Fix: copy the body of references/<file>.md into docs/en/<file>.md (keep the language-switch header)."; \
 		exit 1; \
 	fi; \
-	echo "check-docs: docs/en mirrors match references/ ($(words $(SHARED_DOCS)) shared docs)."
+	guide_fail=""; \
+	for g in "docs/en/guide.md:**[English](guide.md):[简体中文](../zh/guide.md)" "docs/zh/guide.md:**[English](../en/guide.md):[简体中文](guide.md)"; do \
+		path="$${g%%:*}"; rest="$${g#*:}"; self="$${rest%%:*}"; cross="$${rest#*:}"; \
+		if [ ! -f "$$path" ]; then \
+			guide_fail="$$guide_fail missing:$$path"; \
+		elif ! sed -n '3p' "$$path" | grep -qF "$$self" || ! sed -n '3p' "$$path" | grep -qF "$$cross"; then \
+			guide_fail="$$guide_fail broken-language-switch-header:$$path"; \
+		fi; \
+	done; \
+	if [ -n "$$guide_fail" ]; then \
+		echo "ERROR: guide docs (docs/{en,zh}/guide.md) integrity failed:"; \
+		for g in $$guide_fail; do echo "  - $$g"; done; \
+		echo "Fix: restore the missing guide.md or its line-3 language-switch header (self + cross links)."; \
+		exit 1; \
+	fi; \
+	echo "check-docs: docs/en mirrors match references/ ($(words $(SHARED_DOCS)) shared docs); guide docs (en|zh) intact."
 
 check: lint test check-docs ## Run all checks: lint, tests, and docs mirror sync
 	@echo "check: all checks passed (lint, test, check-docs)."
