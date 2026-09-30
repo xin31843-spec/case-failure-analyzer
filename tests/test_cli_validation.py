@@ -167,6 +167,57 @@ class TestCliInputValidation(unittest.TestCase):
             self.assertIn("cannot be identical to, inside, or a parent of --job", res.stderr)
             self.assertFalse(out.exists())
 
+    def test_output_trial_subdirectory_symlinked_to_input_trial_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            job = tmp_path / "jobs" / "j1"
+            trial1 = job / "trial_1"
+            trial2 = job / "trial_2"
+            trial1.mkdir(parents=True)
+            trial2.mkdir(parents=True)
+            (trial1 / "result.json").write_text(
+                json.dumps({"trial_name": "trial_1"}), encoding="utf-8"
+            )
+            (trial2 / "result.json").write_text(
+                json.dumps({"trial_name": "trial_2"}), encoding="utf-8"
+            )
+
+            out = tmp_path / "out"
+            out.mkdir()
+            (out / "trial_1").symlink_to(trial1)
+
+            res = run_cli("--job", str(job), "--output", str(out))
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("cannot be identical to, inside, or a parent of", res.stderr)
+            self.assertFalse(
+                (trial1 / "evidence.json").exists(), "Input trial must remain untouched"
+            )
+
+    def test_autodiscovered_task_overlapping_with_output_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            job = tmp_path / "jobs" / "j1"
+            trial1 = job / "trial_1"
+            trial1.mkdir(parents=True)
+            task = tmp_path / "tasks" / "my_task"
+            task.mkdir(parents=True)
+            (task / "instruction.md").write_text("Solve the problem", encoding="utf-8")
+            (trial1 / "result.json").write_text(
+                json.dumps(
+                    {
+                        "trial_name": "trial_1",
+                        "task_id": {"path": "tasks/my_task"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            out = task / "nested_out"
+            res = run_cli("--job", str(job), "--output", str(out))
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("cannot be identical to, inside, or a parent of --task", res.stderr)
+            self.assertFalse(out.exists(), "Output must not be written inside auto-discovered task")
+
 
 class TestSkillMetadata(unittest.TestCase):
     @unittest.skipIf(yaml is None, "PyYAML not available")

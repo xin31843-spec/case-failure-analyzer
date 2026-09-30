@@ -102,6 +102,19 @@ def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, An
             prompt_pointwise = True
             break
     prompt_contract = ctx.evidence.get("prompt_contract") or {}
+    if prompt_contract.get("instruction_exists") is False:
+        ctx.trace.record(
+            gate_id="gate4_numerical_divergence",
+            matched=False,
+            reason="missing instruction.md: cannot verify prompt contract; abstaining from numerical verifier defect",
+            checks={
+                "has_structured_numerical": True,
+                "bound_to_failure": True,
+                "instruction_exists": False,
+            },
+        )
+        return None
+
     if prompt_contract.get("specifies_pointwise_trajectory"):
         prompt_pointwise = True
 

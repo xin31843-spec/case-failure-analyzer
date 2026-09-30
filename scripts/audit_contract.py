@@ -20,7 +20,13 @@ from typing import Any, Dict, List, Optional, Set
 from diagnostics import WARNING, make_diagnostic
 
 
-def extract_prompt_contract(instruction_text: str, task_dir: Optional[Path]) -> Dict[str, Any]:
+def extract_prompt_contract(
+    instruction_text: str,
+    task_dir: Optional[Path],
+    instruction_exists: Optional[bool] = None,
+) -> Dict[str, Any]:
+    if instruction_exists is None:
+        instruction_exists = bool(instruction_text.strip())
     # 1. Extract code-block JSON keys under "values" / "units", or top-level JSON block / inline key declarations
     json_keys: List[str] = []
     for m in re.finditer(r"```json\s*(.*?)```", instruction_text, re.DOTALL):
@@ -81,15 +87,19 @@ def extract_prompt_contract(instruction_text: str, task_dir: Optional[Path]) -> 
     )
 
     # 5. Check whether prompt explicitly mandates pointwise exact trajectory reproduction
-    specifies_pointwise_trajectory = bool(
-        re.search(
-            r"(?:exact\s+trajectory|exact\s+coordinates|step-by-step\s+trajectory|pointwise\s+trajectory|exact\s+position\s+at\s+each\s+step|instantaneous\s+coordinate\s+matching)",
-            instruction_text,
-            re.IGNORECASE,
+    if instruction_exists:
+        specifies_pointwise_trajectory: Optional[bool] = bool(
+            re.search(
+                r"(?:exact\s+trajectory|exact\s+coordinates|step-by-step\s+trajectory|pointwise\s+trajectory|exact\s+position\s+at\s+each\s+step|instantaneous\s+coordinate\s+matching)",
+                instruction_text,
+                re.IGNORECASE,
+            )
         )
-    )
+    else:
+        specifies_pointwise_trajectory = None
 
     return {
+        "instruction_exists": instruction_exists,
         "json_keys": json_keys,
         "asset_refs": asset_refs,
         "missing_prompt_assets": missing_prompt_assets,
@@ -97,6 +107,12 @@ def extract_prompt_contract(instruction_text: str, task_dir: Optional[Path]) -> 
         "specifies_thermo_columns": specifies_thermo_columns,
         "specifies_pointwise_trajectory": specifies_pointwise_trajectory,
     }
+
+
+TRAJECTORY_KEYWORD_RE = re.compile(
+    r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd)",
+    re.IGNORECASE,
+)
 
 
 class VerifierASTVisitor(ast.NodeVisitor):
@@ -108,6 +124,7 @@ class VerifierASTVisitor(ast.NodeVisitor):
         self.split_vars: Set[str] = set()
         self.has_positional_split_index: bool = False
         self.indexed_split_snippets: List[str] = []
+        self.has_instantaneous_trajectory_assertion: bool = False
 
     def _add_checked_file(self, raw_path: str) -> None:
         cleaned = raw_path.strip()
@@ -122,12 +139,52 @@ class VerifierASTVisitor(ast.NodeVisitor):
         if "." in Path(cleaned).name and cleaned not in self.checked_files:
             self.checked_files.append(cleaned)
 
+    def visit_Assert(self, node: ast.Assert) -> Any:
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and TRAJECTORY_KEYWORD_RE.search(child.id):
+                self.has_instantaneous_trajectory_assertion = True
+            elif isinstance(child, ast.Attribute) and TRAJECTORY_KEYWORD_RE.search(child.attr):
+                self.has_instantaneous_trajectory_assertion = True
+            elif (
+                isinstance(child, ast.Constant)
+                and isinstance(child.value, str)
+                and TRAJECTORY_KEYWORD_RE.search(child.value)
+            ):
+                self.has_instantaneous_trajectory_assertion = True
+        self.generic_visit(node)
+
+    def visit_Compare(self, node: ast.Compare) -> Any:
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name) and TRAJECTORY_KEYWORD_RE.search(child.id):
+                self.has_instantaneous_trajectory_assertion = True
+            elif isinstance(child, ast.Attribute) and TRAJECTORY_KEYWORD_RE.search(child.attr):
+                self.has_instantaneous_trajectory_assertion = True
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> Any:
         func_name = ""
         if isinstance(node.func, ast.Attribute):
             func_name = node.func.attr
         elif isinstance(node.func, ast.Name):
             func_name = node.func.id
+
+        if TRAJECTORY_KEYWORD_RE.search(func_name):
+            self.has_instantaneous_trajectory_assertion = True
+        elif func_name in (
+            "check",
+            "fail",
+            "assertEqual",
+            "assertTrue",
+            "assert_allclose",
+            "isclose",
+            "assertLess",
+            "assertGreater",
+        ):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Name) and TRAJECTORY_KEYWORD_RE.search(child.id):
+                    self.has_instantaneous_trajectory_assertion = True
+                elif isinstance(child, ast.Attribute) and TRAJECTORY_KEYWORD_RE.search(child.attr):
+                    self.has_instantaneous_trajectory_assertion = True
 
         if func_name == "join" and len(node.args) >= 2:
             first_arg = node.args[0]
@@ -311,13 +368,7 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
         )
 
     # Hazard 4: Verifier checks instantaneous trajectory RMSD / per-step coordinates rather than ensemble averages
-    checks_instantaneous_trajectory = bool(
-        re.search(
-            r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd)",
-            code_text,
-            re.IGNORECASE,
-        )
-    )
+    checks_instantaneous_trajectory = visitor.has_instantaneous_trajectory_assertion
     if checks_instantaneous_trajectory:
         hazards.append(
             {
@@ -350,14 +401,14 @@ def audit_contract(
     from runtime_state import resolve_verifier_script_path
 
     instruction_path = task_dir / "instruction.md" if task_dir else None
-    verify_py_path = resolve_verifier_script_path(task_dir)
-
+    instruction_exists = bool(instruction_path and instruction_path.is_file())
     instruction_text = (
-        instruction_path.read_text(encoding="utf-8", errors="replace")
-        if (instruction_path and instruction_path.is_file())
-        else ""
+        instruction_path.read_text(encoding="utf-8", errors="replace") if instruction_exists else ""
     )
-    prompt_info = extract_prompt_contract(instruction_text, task_dir)
+    prompt_info = extract_prompt_contract(
+        instruction_text, task_dir, instruction_exists=instruction_exists
+    )
+    verify_py_path = resolve_verifier_script_path(task_dir)
     verifier_info = inspect_verifier_code(verify_py_path)
     diagnostics: List[Dict[str, Any]] = list(verifier_info.get("diagnostics") or [])
 
@@ -668,11 +719,13 @@ def audit_contract(
                     )
                 )
 
+            instruction_exists = prompt_info.get("instruction_exists", False)
             if (
-                has_ensemble_match
+                instruction_exists
+                and has_ensemble_match
                 and has_trajectory_metric
                 and bound_to_failure
-                and not prompt_info["specifies_pointwise_trajectory"]
+                and (prompt_info.get("specifies_pointwise_trajectory") is False)
             ):
                 triggered = True
                 failure_binding = "direct"

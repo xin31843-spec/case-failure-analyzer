@@ -329,7 +329,11 @@ def discover_all(
             trial_dir=None,
             include_session_files=include_session_files,
         )
-        return {"job_dir": str(job_dir.resolve()), "trials": [inv]}
+        return {
+            "job_dir": str(job_dir.resolve()),
+            "task_dir": inv.get("task_dir"),
+            "trials": [inv],
+        }
 
     trial_inventories = [
         build_trial_inventory(
@@ -340,7 +344,14 @@ def discover_all(
         )
         for t in trials
     ]
-    return {"job_dir": str(job_dir.resolve()), "trials": trial_inventories}
+    resolved_task_dir = next(
+        (inv["task_dir"] for inv in trial_inventories if inv.get("task_dir")), None
+    )
+    return {
+        "job_dir": str(job_dir.resolve()),
+        "task_dir": resolved_task_dir,
+        "trials": trial_inventories,
+    }
 
 
 def main() -> None:

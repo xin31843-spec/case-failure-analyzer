@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -244,6 +245,9 @@ def _clean_managed_trial_dir(target_dir: Path, allowed_files: Set[str]) -> None:
                 fpath.unlink()
 
 
+MANIFEST_FILENAME = ".cfa_manifest.json"
+
+
 def _paths_overlap(p1: Path, p2: Path) -> bool:
     """Check if p1 and p2 are identical, or if either is a parent/child of the other (resolving symlinks)."""
     try:
@@ -267,68 +271,185 @@ def _paths_overlap(p1: Path, p2: Path) -> bool:
     return False
 
 
+def _validate_input_output_isolation(
+    out_dir: Path,
+    input_roots: List[Tuple[Optional[Path], str]],
+    planned_trial_names: List[str],
+) -> None:
+    """Enforce strict read-only boundary between output targets and all inputs."""
+    resolved_inputs: List[Tuple[Path, str]] = []
+    for inp, label in input_roots:
+        if inp is not None:
+            try:
+                resolved_inputs.append((inp.resolve(), label))
+            except Exception:
+                resolved_inputs.append((Path(inp.absolute()), label))
+
+    def _assert_no_overlap(target: Path, target_label: str) -> None:
+        try:
+            r_target = target.resolve()
+        except Exception:
+            r_target = Path(target.absolute())
+        for r_inp, inp_label in resolved_inputs:
+            is_overlap = False
+            if r_target == r_inp:
+                is_overlap = True
+            else:
+                try:
+                    r_target.relative_to(r_inp)
+                    is_overlap = True
+                except ValueError:
+                    pass
+                if not is_overlap:
+                    try:
+                        r_inp.relative_to(r_target)
+                        is_overlap = True
+                    except ValueError:
+                        pass
+            if is_overlap:
+                print(
+                    f"ERROR: {target_label} ({target}) cannot be identical to, inside, or a parent of {inp_label} ({r_inp}).",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+
+    # 1. Check output root
+    _assert_no_overlap(out_dir, "--output path")
+
+    # 2. Check each planned trial output directory
+    for t_name in planned_trial_names:
+        t_dest = out_dir / t_name
+        _assert_no_overlap(t_dest, f"--output trial directory '{t_name}'")
+
+    # 3. If out_dir exists or is a symlink, inspect its entire tree without following symlinks to reject links into inputs
+    if out_dir.exists() or out_dir.is_symlink():
+        if out_dir.is_symlink():
+            _assert_no_overlap(out_dir, "--output symlink target")
+        for root, dirs, files in os.walk(out_dir, followlinks=False):
+            root_path = Path(root)
+            for d in dirs:
+                d_path = root_path / d
+                _assert_no_overlap(d_path, f"output subdirectory '{d_path.relative_to(out_dir)}'")
+            for f in files:
+                f_path = root_path / f
+                if f_path.is_symlink():
+                    _assert_no_overlap(f_path, f"output symlink '{f_path.relative_to(out_dir)}'")
+
+
 def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial: bool) -> None:
-    """Atomically publish staging directory contents into out_dir, cleaning only managed artifacts."""
+    """Transactionally publish staging directory contents into out_dir with rollback.
+
+    Guarantees:
+    1. Only managed artifacts recorded in .cfa_manifest.json (or known legacy artifacts) are cleaned.
+    2. User-authored files and subdirectories are strictly preserved.
+    3. Rollback guarantee: If any error occurs during cleanup or file copying, out_dir is
+       completely restored to its pre-publish state, ensuring readers only observe a complete
+       old version or a complete new version.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if not is_multi_trial:
-        # Single-trial mode:
-        # 1. Purge root job_summary.json if present
-        stale_root_summary = out_dir / "job_summary.json"
-        if stale_root_summary.is_file():
-            stale_root_summary.unlink()
+    # 1. Collect staged files and write manifest into staging_dir
+    staged_rel_paths = sorted(
+        str(p.relative_to(staging_dir)) for p in staging_dir.rglob("*") if p.is_file()
+    )
+    staged_dirs = sorted(p.name for p in staging_dir.iterdir() if p.is_dir())
+    manifest_data = {
+        "schema_version": "cfa-manifest-v1",
+        "layout": "multi" if is_multi_trial else "single",
+        "managed_files": staged_rel_paths + [MANIFEST_FILENAME],
+        "managed_dirs": staged_dirs,
+    }
+    manifest_file = staging_dir / MANIFEST_FILENAME
+    manifest_file.write_text(
+        json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    staged_rel_paths.append(MANIFEST_FILENAME)
 
-        # 2. Purge stale root trial files not present in staging
-        staged_files = {p.name for p in staging_dir.iterdir() if p.is_file()}
-        _clean_managed_trial_dir(out_dir, allowed_files=staged_files)
+    # 2. Determine previous managed artifacts in out_dir
+    old_manifest_path = out_dir / MANIFEST_FILENAME
+    old_managed_files: Set[str] = set()
+    old_managed_dirs: Set[str] = set()
 
-        # 3. Clean any old trial subdirectories from previous multi-trial runs if they contain managed files
-        for child in list(out_dir.iterdir()):
-            if child.is_dir() and child.resolve() != staging_dir.resolve():
-                for m_file in KNOWN_TRIAL_ARTIFACTS:
-                    m_path = child / m_file
-                    if m_path.is_file():
-                        m_path.unlink()
+    if old_manifest_path.is_file():
+        try:
+            old_manifest = json.loads(old_manifest_path.read_text(encoding="utf-8"))
+            old_managed_files = set(old_manifest.get("managed_files") or [])
+            old_managed_dirs = set(old_manifest.get("managed_dirs") or [])
+        except Exception:
+            pass
+
+    if not old_managed_files:
+        # Legacy fallback: only clean known root trial/summary files
+        for fname in KNOWN_TRIAL_ARTIFACTS | KNOWN_ROOT_ARTIFACTS:
+            if (out_dir / fname).is_file():
+                old_managed_files.add(fname)
+
+    # Managed files to remove (existed previously, not in new staged files)
+    files_to_remove = old_managed_files - set(staged_rel_paths)
+
+    # 3. Create transactional backup of all files in out_dir that will be deleted or overwritten
+    backup_dir = Path(tempfile.mkdtemp(prefix="cfa_tx_backup_"))
+    backed_up_items: Dict[str, Path] = {}
+    pre_publish_files = {str(p.relative_to(out_dir)) for p in out_dir.rglob("*") if p.is_file()}
+
+    try:
+        # Back up existing files that will be touched
+        for rel_str in files_to_remove | (old_managed_files & set(staged_rel_paths)):
+            target = out_dir / rel_str
+            if target.is_file():
+                b_path = backup_dir / rel_str
+                b_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, b_path)
+                backed_up_items[rel_str] = b_path
+
+        # Step A: Delete stale managed files
+        for rel_str in files_to_remove:
+            target = out_dir / rel_str
+            if target.is_file():
+                target.unlink()
+
+        # Step B: Clean old managed trial directories if empty
+        for d_name in old_managed_dirs - set(staged_dirs):
+            d_path = out_dir / d_name
+            if d_path.is_dir():
                 try:
-                    child.rmdir()
+                    d_path.rmdir()
                 except OSError:
-                    pass  # Retain directory if user files are present
+                    pass  # Keep if user files exist
 
-        # 4. Copy staged files into out_dir
-        for p in staging_dir.iterdir():
-            if p.is_file():
-                dest = out_dir / p.name
-                shutil.copy2(p, dest)
-    else:
-        # Multi-trial mode:
-        # 1. Purge root trial files from previous single-trial runs
-        _clean_managed_trial_dir(out_dir, allowed_files=set())
+        # Step C: Copy all staged files into out_dir
+        for rel_str in staged_rel_paths:
+            src = staging_dir / rel_str
+            dest = out_dir / rel_str
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
 
-        # 2. Publish each trial directory
-        staged_trial_dirs = {p.name for p in staging_dir.iterdir() if p.is_dir()}
-        for p in staging_dir.iterdir():
-            if p.is_dir():
-                t_dest = out_dir / p.name
-                t_dest.mkdir(parents=True, exist_ok=True)
-                staged_trial_files = {tf.name for tf in p.iterdir() if tf.is_file()}
-                _clean_managed_trial_dir(t_dest, allowed_files=staged_trial_files)
-                for tf in p.iterdir():
-                    if tf.is_file():
-                        shutil.copy2(tf, t_dest / tf.name)
-            elif p.is_file():
-                shutil.copy2(p, out_dir / p.name)
-
-        # 3. Clean any old trial subdirectories not in staged_trial_dirs if they contain managed files
-        for child in list(out_dir.iterdir()):
-            if child.is_dir() and child.name not in staged_trial_dirs:
-                for m_file in KNOWN_TRIAL_ARTIFACTS:
-                    m_path = child / m_file
-                    if m_path.is_file():
-                        m_path.unlink()
+    except Exception:
+        # ROLLBACK: Restore out_dir to exact pre-publish state
+        current_files = {str(p.relative_to(out_dir)) for p in out_dir.rglob("*") if p.is_file()}
+        # 1. Remove newly created files
+        for newly_created in current_files - pre_publish_files:
+            try:
+                (out_dir / newly_created).unlink()
+            except OSError:
+                pass
+        # 2. Restore all backed up files
+        for rel_str, b_path in backed_up_items.items():
+            dest = out_dir / rel_str
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(b_path, dest)
+        # 3. Clean any empty dirs created during the failed attempt
+        for rel_str in staged_rel_paths:
+            parent = (out_dir / rel_str).parent
+            while parent != out_dir and parent.is_dir():
                 try:
-                    child.rmdir()
+                    parent.rmdir()
+                    parent = parent.parent
                 except OSError:
-                    pass
+                    break
+        raise
+    finally:
+        shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def write_outputs(
@@ -517,18 +638,11 @@ def main() -> None:
         print(f"ERROR: --task path does not exist: {args.task}", file=sys.stderr)
         sys.exit(2)
 
-    if _paths_overlap(args.output, args.job):
-        print(
-            f"ERROR: --output path ({args.output}) cannot be identical to, inside, or a parent of --job path ({args.job}).",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    if args.task is not None and _paths_overlap(args.output, args.task):
-        print(
-            f"ERROR: --output path ({args.output}) cannot be identical to, inside, or a parent of --task path ({args.task}).",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+    _validate_input_output_isolation(
+        out_dir=args.output,
+        input_roots=[(args.job, "--job"), (args.task, "--task")],
+        planned_trial_names=[],
+    )
 
     all_trials = discover_trials(args.job, trial_filter="all")
     if args.trial != "all":
@@ -561,6 +675,28 @@ def main() -> None:
     )
     trials = discovery.get("trials") or []
     job_dir = Path(discovery["job_dir"])
+    task_dir_path = Path(discovery["task_dir"]) if discovery.get("task_dir") else None
+
+    all_input_roots: List[Tuple[Optional[Path], str]] = [
+        (job_dir, "--job"),
+        (task_dir_path, "--task"),
+    ]
+    for inv in trials:
+        t_task = inv.get("task_dir")
+        if t_task and Path(t_task) != task_dir_path:
+            all_input_roots.append((Path(t_task), "--task"))
+        t_path = inv.get("trial_dir")
+        if t_path:
+            all_input_roots.append((Path(t_path), f"input trial '{inv.get('trial_name')}'"))
+    for t in all_trials:
+        all_input_roots.append((t, f"input trial '{t.name}'"))
+
+    planned_trial_names = [inv["trial_name"] for inv in trials] if len(trials) > 1 else []
+    _validate_input_output_isolation(
+        out_dir=args.output,
+        input_roots=all_input_roots,
+        planned_trial_names=planned_trial_names,
+    )
 
     staging_dir = Path(tempfile.mkdtemp(prefix="cfa_staging_"))
     try:

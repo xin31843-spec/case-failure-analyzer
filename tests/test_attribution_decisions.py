@@ -343,6 +343,26 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
         {"not_gate_id": "gate4_numerical_divergence", "not_category": "verifier"},
     ),
     (
+        "gate4 abstains when instruction.md is missing (instruction_exists=False)",
+        _evidence(
+            prompt_contract={"instruction_exists": False, "specifies_pointwise_trajectory": None},
+            verifier_observations=[
+                _fail_log(
+                    "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 "
+                    "(ensemble average matches)"
+                ),
+                {
+                    "obs_id": "ver:hazard:1",
+                    "matched_text": "instantaneous_trajectory_rmsd",
+                    "triggered": True,
+                    "failure_binding": "direct",
+                    "summary": "instantaneous trajectory comparison",
+                },
+            ],
+        ),
+        {"not_gate_id": "gate4_numerical_divergence", "not_category": "verifier"},
+    ),
+    (
         "gate4 abstains when contract loop is unproven",
         _evidence(
             verifier_observations=[

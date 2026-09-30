@@ -28,7 +28,30 @@
 
 ---
 
-## 2. 归因 Agent 的五大必要条件与硬规则 (`Necessary Gate Conditions for Blaming the Agent`)
+### 2. 因果时间线与确定性门控求值顺序 (`Causal Precedence Timeline & Gate Evaluation Order`)
+
+所有因果归因严格遵循客观时序与依赖链：
+$$\text{Infra (启动前环境)} \longrightarrow \text{Case (题目资产/配置)} \longrightarrow \text{Verifier (评测器崩溃/解析/容差)} \longrightarrow \text{Agent (正向偏离动作)}$$
+
+为在代码中确定性实现该时序，引擎按以下严格声明顺序依次求值各个 Gate：
+1. **Gate 1: 启动前环境基础设施 (`gate1_infra`)**：若 `agent_started == false` 且存在致命基础设施故障证据，归因为 `infra`；若无日志则归因为 `unknown`。
+2. **Gate 2: 题目资产与配置缺陷 (`gate2_case`)**：题目要求资产缺失或镜像损坏，归因为 `case`。
+3. **Gate 3: 评测器缺陷 (`gate3_verifier`)**：评测器自身内部崩溃（`VERIFIER_RECOMPUTE_DEFECT`）或完成直接因果绑定的解析正则缺陷（`failure_binding == "direct"`），归因为 `verifier`。
+4. **Gate 4: 数值漂移与容差缺陷 (`gate4_numerical`)**：结构化瞬时轨迹发散但系综均值守恒吻合、且三方契约闭环成立时，归因为 `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`)。
+5. **Gate 5: 充分性与证据不足门控 (`gate5_insufficient`)**：若缺乏将责任归因于 Agent 的正面因果证据，保守弃判并退化至 `unknown`，防止误怪 Agent。
+6. **Gate 6: Agent 主观决策与操作错误 (`gate6_agent_primary`)**：在满足 5 项必要条件且具备正面行为信号时归因为 `agent`。
+7. **Gate 7: 未知兜底 (`gate7_unknown`)**：兜底保守弃判。
+
+| 阶段顺序 | 对应门控 | 适用范围 / 触发条件 | 归因类别 | 绝对禁止项 |
+| :--- | :--- | :--- | :--- | :--- |
+| **阶段 1: 启动前环境** | Gate 1 | `agent_started == false` 且存在致命基础设施错误 | `infra` | 严禁归因 `agent` |
+| **阶段 1b: 启动前静默**| Gate 1 | `agent_started == false` 且无任何异常日志证据 | `unknown` | 严禁归因 `agent` |
+| **阶段 2: 题目资产配置** | Gate 2 | 缺失 Prompt 资产文件或题目镜像配置损坏 | `case` | 严禁归因 `agent` |
+| **阶段 3: 评测器崩溃/解析**| Gate 3 | 评测器内部崩溃或直接绑定的解析器缺陷 | `verifier` | 严禁归因 `agent` 或判为 `unknown` |
+| **阶段 4: 数值容差缺陷** | Gate 4 | 瞬时轨迹发散但系综统计量吻合且闭环成立 | `verifier` | 严禁未经验证归因 `agent`（不完备时弃判）|
+| **阶段 5: Agent 决策偏离** | Gate 6 | Agent 正向行为偏离/轨迹操作错误 | `agent` | 严禁无正面证据直接推定 Agent 责任 |
+
+### 归因 Agent 的五大必要条件与硬规则 (`Necessary Gate Conditions for Blaming the Agent`)
 
 仅当以下 **5 项必要条件全部成立** 且存在至少一项 **Agent 正面证据** 时，才允许将 `primary_root_cause.category` 判为 `"agent"`：
 
@@ -60,6 +83,18 @@
 
 ## 4. 数值漂移与竞争假设规则 (`Numerical Attribution & Competing Hypothesis Rules`)
 
-- **结构化数值证据要求**：当具备结构化对比证据表明逐点轨迹/瞬时坐标发散但系综均值或守恒量与参考值吻合时，主根因归为 `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`)，责任人属验证器方。严禁仅凭单一词汇直接下结论（无数据时退化至 `unknown`）。
+- **严格三方闭环数值验证 (`Closed-Loop Numerical Verification`)**：数值轨迹漂移判定必须同时满足以下三方条件：
+  1. **Prompt 契约核验**：`instruction.md` 必须真实存在且**未**要求逐点完全重合的瞬时轨迹。若缺失 `instruction.md`，契约不完备，必须保守弃判退化至 `unknown`。
+  2. **可执行 AST 代码检查**：`tests/verify.py` 必须在可执行 Python AST（断言 `ast.Assert`、比较 `ast.Compare` 或校验调用）中真正评估了瞬时轨迹/坐标。若相关词汇仅出现在注释中（如 `# trajectory_rmsd`），不构成评测缺陷，必须保守弃判。
+  3. **运行时直接因果绑定**：`verifier/verify.log` 必须直接将失败断言绑定到瞬时 RMSD，且同时记录有系综均值或守恒量吻合。
+  4. 满足以上三项，方可判定为主根因 `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`)。
 - **竞争假设必填**：每一个失败或异常用例都必须填充 `competing_hypotheses`（对应 `candidate-hypotheses.json`）及 `first_unrecovered_deviation`。
 - **校准的证据强度评分**：置信度评分（`confidence_kind = "heuristic_evidence_score"`，`evidence_strength = "high" | "medium" | "low"`）由支持证据点数、多源交叉印证及竞争假设区分度确定性计算得出（见 `scripts/confidence.py`）。
+
+---
+
+## 5. 产物所有权清单与事务发布机制 (`Artifact Ownership & Transactional Publication`)
+
+- **清单所有权追踪**：输出目录中通过 `.cfa_manifest.json` 显式记录 CFA 管理的文件与目录清单，仅清理受管产物。
+- **严格保护用户非受管文件**：用户自行创建的任意子目录及文件（如 `user_dir/report.md`、`custom_notes.txt`）在单/多 Trial 切换及重跑时受到严格保护，绝不被盲目扫描删除。
+- **事务发布与异常回滚**：在正式向 `--output` 发布前对即将被修改/删除的文件执行事务备份。一旦写入或复制发生异常，立即触发完整回滚，将 `--output` 完整恢复至发布前状态，杜绝残留混合或损坏版本。

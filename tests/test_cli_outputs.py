@@ -326,6 +326,66 @@ class TestLifecycleAndRerun(unittest.TestCase):
         self.assertEqual(children, [user_file])
         self.assertEqual(user_file.read_text(encoding="utf-8"), "do not touch")
 
+    def test_user_nested_subdirectory_and_report_preserved(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        user_sub = out / "user_dir"
+        user_sub.mkdir(parents=True)
+        user_report = user_sub / "report.md"
+        user_report.write_text("# My User Report", encoding="utf-8")
+
+        proc = run_cli("--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "trial_b_pass")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(user_report.is_file(), "User report in user_dir must not be deleted")
+        self.assertEqual(user_report.read_text(encoding="utf-8"), "# My User Report")
+
+    def test_transactional_rollback_restores_pre_publish_state_on_copy_error(self) -> None:
+        import shutil
+        from unittest.mock import patch
+
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from analyze_case import _publish_staging_to_output
+
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+        initial_file = out / "report.md"
+        initial_file.write_text("INITIAL_REPORT_V1", encoding="utf-8")
+        manifest_file = out / ".cfa_manifest.json"
+        manifest_file.write_text(
+            json.dumps(
+                {
+                    "schema_version": "cfa-manifest-v1",
+                    "layout": "single",
+                    "managed_files": ["report.md", ".cfa_manifest.json"],
+                    "managed_dirs": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        staging = Path(tempfile.mkdtemp())
+        (staging / "report.md").write_text("NEW_REPORT_V2", encoding="utf-8")
+        (staging / "analysis.json").write_text('{"new": true}', encoding="utf-8")
+
+        original_copy2 = shutil.copy2
+        call_count = 0
+
+        def fail_on_second_copy(src, dst):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                raise OSError("Simulated disk error during publish")
+            return original_copy2(src, dst)
+
+        with patch("shutil.copy2", side_effect=fail_on_second_copy):
+            with self.assertRaises(OSError):
+                _publish_staging_to_output(staging, out, is_multi_trial=False)
+
+        # Rollback check: out must be restored to its exact pre-publish state
+        self.assertEqual(initial_file.read_text(encoding="utf-8"), "INITIAL_REPORT_V1")
+        self.assertFalse((out / "analysis.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

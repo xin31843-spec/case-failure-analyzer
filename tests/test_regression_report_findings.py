@@ -708,6 +708,43 @@ class TestReportRegressionFindings(unittest.TestCase):
             self.assertEqual(stats["verifier_started_count"], 1)
             self.assertEqual(stats["verdict_counts"]["failed"], 1)
 
+    def test_23_numerical_divergence_abstains_when_instruction_missing(self) -> None:
+        """P1: Missing instruction.md means incomplete prompt contract; must abstain from numerical defect."""
+        from tests.archetype_builders import build_golden6_numerical_md_trajectory_divergence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_dir, task_dir = build_golden6_numerical_md_trajectory_divergence(root)
+            # Remove instruction.md
+            (task_dir / "instruction.md").unlink()
+
+            disc = discover_all(job_path=job_dir, task_path=task_dir)
+            ev, an, rep, _ = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
+            self.assertNotEqual(an["primary_root_cause"]["code"], "VERIFIER_TOLERANCE_TOO_STRICT")
+            self.assertEqual(an["primary_root_cause"]["category"], "unknown")
+            self.assertEqual(an["primary_root_cause"]["code"], "UNKNOWN_INSUFFICIENT_EVIDENCE")
+
+    def test_24_numerical_divergence_abstains_when_verifier_only_comments_trajectory(self) -> None:
+        """P1: Verifier mentioning trajectory_rmsd only in comments must not trigger numerical defect."""
+        from tests.archetype_builders import build_golden6_numerical_md_trajectory_divergence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job_dir, task_dir = build_golden6_numerical_md_trajectory_divergence(root)
+            # Replace verify.py code so trajectory_rmsd is ONLY in comments
+            (task_dir / "tests" / "verify.py").write_text(
+                "import sys\n"
+                "# Note: We do not check trajectory_rmsd here, instantaneous_position or coord_rmsd\n"
+                "print('Checking completed')\n",
+                encoding="utf-8",
+            )
+
+            disc = discover_all(job_path=job_dir, task_path=task_dir)
+            ev, an, rep, _ = analyze_single_trial(disc["trials"][0], job_dir=job_dir)
+            self.assertNotEqual(an["primary_root_cause"]["code"], "VERIFIER_TOLERANCE_TOO_STRICT")
+            self.assertEqual(an["primary_root_cause"]["category"], "unknown")
+            self.assertEqual(an["primary_root_cause"]["code"], "UNKNOWN_INSUFFICIENT_EVIDENCE")
+
 
 if __name__ == "__main__":
     unittest.main()
