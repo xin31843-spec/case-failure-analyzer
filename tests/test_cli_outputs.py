@@ -243,6 +243,89 @@ class TestLifecycleAndRerun(unittest.TestCase):
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertFalse((out / "job_summary.json").exists())
 
+    def test_switching_multi_to_single_preserves_user_files_and_cleans_managed(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+
+        # 1. Multi-trial run
+        proc1 = run_cli("--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "all")
+        self.assertEqual(proc1.returncode, 0, proc1.stderr)
+        self.assertTrue((out / "trial_a_fail" / "report.md").is_file())
+        self.assertTrue((out / "job_summary.json").is_file())
+
+        # 2. Add user-authored custom files
+        user_root_note = out / "custom_notes.txt"
+        user_root_note.write_text("important user notes", encoding="utf-8")
+        user_trial_calc = out / "trial_a_fail" / "user_calc.dat"
+        user_trial_calc.write_text("some custom calculation", encoding="utf-8")
+
+        # 3. Rerun single trial in same out dir
+        proc2 = run_cli("--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "trial_b_pass")
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+
+        # Single-trial outputs exist at root
+        self.assertTrue((out / "evidence.json").is_file())
+        self.assertTrue((out / "analysis.json").is_file())
+        self.assertFalse((out / "job_summary.json").exists())
+
+        # User files are untouched
+        self.assertTrue(user_root_note.is_file())
+        self.assertEqual(user_root_note.read_text(encoding="utf-8"), "important user notes")
+        self.assertTrue(user_trial_calc.is_file())
+        self.assertEqual(user_trial_calc.read_text(encoding="utf-8"), "some custom calculation")
+
+        # Managed trial artifacts inside trial_a_fail were cleaned
+        self.assertFalse((out / "trial_a_fail" / "report.md").exists())
+
+    def test_switching_single_to_multi_preserves_user_files_and_cleans_managed(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+
+        # 1. Single trial run
+        proc1 = run_cli("--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "trial_b_pass")
+        self.assertEqual(proc1.returncode, 0, proc1.stderr)
+        self.assertTrue((out / "evidence.json").is_file())
+        self.assertTrue((out / "report.md").is_file())
+
+        # 2. Add user file in root
+        user_root_note = out / "custom_notes.txt"
+        user_root_note.write_text("keep this", encoding="utf-8")
+
+        # 3. Rerun multi-trial in same out dir
+        proc2 = run_cli("--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "all")
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+
+        # Root managed trial artifacts must be purged
+        self.assertFalse((out / "report.md").exists())
+        self.assertFalse((out / "evidence.json").exists())
+        self.assertTrue((out / "job_summary.json").is_file())
+
+        # Multi-trial subdirs exist
+        self.assertTrue((out / "trial_a_fail" / "report.md").is_file())
+        self.assertTrue((out / "trial_b_pass" / "report.md").is_file())
+
+        # User file is preserved
+        self.assertTrue(user_root_note.is_file())
+        self.assertEqual(user_root_note.read_text(encoding="utf-8"), "keep this")
+
+    def test_atomic_publish_rollback_leaves_output_untouched_on_failure(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+        user_file = out / "existing_work.txt"
+        user_file.write_text("do not touch", encoding="utf-8")
+
+        # Point CLI to a non-existent trial to fail early
+        proc = run_cli(
+            "--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "non_existent_trial"
+        )
+        self.assertEqual(proc.returncode, 2)
+
+        # out directory contains only the original user file, nothing was written or deleted
+        children = list(out.iterdir())
+        self.assertEqual(children, [user_file])
+        self.assertEqual(user_file.read_text(encoding="utf-8"), "do not touch")
+
 
 if __name__ == "__main__":
     unittest.main()

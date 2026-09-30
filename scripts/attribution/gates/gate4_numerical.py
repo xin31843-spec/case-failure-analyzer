@@ -94,7 +94,64 @@ def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, An
         )
         return None
 
+    # Three-way contract closed-loop verification:
+    # 1. Reject if prompt explicitly mandated exact pointwise trajectory reproduction
+    prompt_pointwise = False
+    for c in ctx.contracts:
+        if c.get("prompt_requirement") == "pointwise_exact":
+            prompt_pointwise = True
+            break
+    prompt_contract = ctx.evidence.get("prompt_contract") or {}
+    if prompt_contract.get("specifies_pointwise_trajectory"):
+        prompt_pointwise = True
+
+    if prompt_pointwise:
+        ctx.trace.record(
+            gate_id="gate4_numerical_divergence",
+            matched=False,
+            reason="prompt explicitly mandated exact pointwise trajectory reproduction; verifier tolerance is not at fault",
+            checks={
+                "has_structured_numerical": True,
+                "bound_to_failure": True,
+                "prompt_pointwise": True,
+            },
+        )
+        return None
+
+    # 2. Require verified contract proof from tests/verify.py and audit_contract
+    contract_defects = [
+        c
+        for c in ctx.contracts
+        if c.get("item") == "trajectory:instantaneous_rmsd"
+        and c.get("alignment") == "verifier_defect"
+    ]
+    hazard_defects = [
+        v
+        for v in ctx.verifier_obs
+        if v.get("matched_text") == "instantaneous_trajectory_rmsd"
+        and v.get("triggered")
+        and v.get("failure_binding") == "direct"
+    ]
+    has_contract_proof = bool(contract_defects or hazard_defects)
+
+    if not has_contract_proof:
+        ctx.trace.record(
+            gate_id="gate4_numerical_divergence",
+            matched=False,
+            reason="unproven numerical tolerance defect: tests/verify.py or instruction.md contract closed loop not established",
+            checks={
+                "has_structured_numerical": True,
+                "bound_to_failure": True,
+                "has_contract_proof": False,
+            },
+        )
+        return None
+
     ev_refs = ["ver:fail_log"] if fail_log_obs else ["art:trial_result"]
+    if contract_defects:
+        ev_refs.append(contract_defects[0]["contract_id"])
+    elif hazard_defects:
+        ev_refs.append(hazard_defects[0]["obs_id"])
     prc = attach_confidence_metadata(
         {
             "category": "verifier",
@@ -145,8 +202,13 @@ def gate4_numerical_divergence(ctx: AttributionContext) -> Optional[Dict[str, An
     ctx.trace.record(
         gate_id="gate4_numerical_divergence",
         matched=True,
-        reason="verifier log shows divergence with matching ensemble statistics",
-        checks={"has_structured_numerical": has_structured_numerical},
+        reason="verifier log shows divergence with matching ensemble statistics and verified prompt/verifier contract",
+        checks={
+            "has_structured_numerical": has_structured_numerical,
+            "bound_to_failure": bound_to_failure,
+            "has_contract_proof": True,
+            "prompt_pointwise": False,
+        },
     )
 
     return {

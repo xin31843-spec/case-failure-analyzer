@@ -193,7 +193,18 @@ def build_golden6_numerical_md_trajectory_divergence(root: Path) -> Tuple[Path, 
     task_dir = root / "tasks" / "md-task"
     (trial_dir / "agent").mkdir(parents=True)
     (trial_dir / "verifier").mkdir(parents=True)
-    task_dir.mkdir(parents=True)
+    (task_dir / "tests").mkdir(parents=True, exist_ok=True)
+    (task_dir / "instruction.md").write_text(
+        "Run NVE molecular dynamics simulation and verify energy conservation.",
+        encoding="utf-8",
+    )
+    (task_dir / "tests" / "verify.py").write_text(
+        "import sys\n"
+        "# Verify instantaneous trajectory\n"
+        "trajectory_rmsd = 0.45\n"
+        "assert trajectory_rmsd < 0.01, f'instantaneous_position trajectory_rmsd={trajectory_rmsd} > 0.01 (ensemble average matches)'\n",
+        encoding="utf-8",
+    )
     (trial_dir / "agent" / "trajectory.json").write_text(
         json.dumps({"schema_version": "ATIF-v1.7", "steps": []}), encoding="utf-8"
     )

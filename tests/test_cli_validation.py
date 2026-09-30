@@ -111,6 +111,62 @@ class TestCliInputValidation(unittest.TestCase):
             self.assertEqual(res.returncode, 0, res.stderr)
             self.assertTrue((out / "analysis.json").is_file())
 
+    def test_output_same_as_job_exits_2_without_writing_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp) / "job"
+            job.mkdir()
+            (job / "result.json").write_text(json.dumps({"trial_name": "t1"}), encoding="utf-8")
+            res = run_cli("--job", str(job), "--output", str(job))
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("cannot be identical to, inside, or a parent of --job", res.stderr)
+
+    def test_output_inside_job_exits_2_without_writing_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp) / "job"
+            job.mkdir()
+            (job / "result.json").write_text(json.dumps({"trial_name": "t1"}), encoding="utf-8")
+            out = job / "nested_output"
+            res = run_cli("--job", str(job), "--output", str(out))
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("cannot be identical to, inside, or a parent of --job", res.stderr)
+            self.assertFalse(out.exists())
+
+    def test_output_parent_of_job_exits_2_without_writing_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "parent"
+            job = parent / "job"
+            job.mkdir(parents=True)
+            (job / "result.json").write_text(json.dumps({"trial_name": "t1"}), encoding="utf-8")
+            res = run_cli("--job", str(job), "--output", str(parent))
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("cannot be identical to, inside, or a parent of --job", res.stderr)
+
+    def test_output_inside_task_exits_2_without_writing_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp) / "job"
+            job.mkdir()
+            (job / "result.json").write_text(json.dumps({"trial_name": "t1"}), encoding="utf-8")
+            task = Path(tmp) / "task"
+            task.mkdir()
+            out = task / "nested_out"
+            res = run_cli("--job", str(job), "--task", str(task), "--output", str(out))
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("cannot be identical to, inside, or a parent of --task", res.stderr)
+            self.assertFalse(out.exists())
+
+    def test_output_symlink_inside_job_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp) / "job"
+            job.mkdir()
+            (job / "result.json").write_text(json.dumps({"trial_name": "t1"}), encoding="utf-8")
+            symlink_to_job = Path(tmp) / "job_symlink"
+            symlink_to_job.symlink_to(job)
+            out = symlink_to_job / "out"
+            res = run_cli("--job", str(job), "--output", str(out))
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("cannot be identical to, inside, or a parent of --job", res.stderr)
+            self.assertFalse(out.exists())
+
 
 class TestSkillMetadata(unittest.TestCase):
     @unittest.skipIf(yaml is None, "PyYAML not available")

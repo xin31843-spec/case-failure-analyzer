@@ -25,7 +25,21 @@ For every failed trial:
 
 ---
 
-## 2. Necessary Gate Conditions for Blaming the Agent
+## 2. Causal Precedence Timeline & Gate Conditions
+
+All causal attribution follows a strict temporal and dependency hierarchy:
+$$\text{Infra (pre-startup)} \longrightarrow \text{Case (assets/setup)} \longrightarrow \text{Verifier (crash/parser/tolerance)} \longrightarrow \text{Agent (positive deviation)}$$
+
+| Precedence Stage | Scope / Trigger | Required Category | Forbidden Defaults |
+| :--- | :--- | :--- | :--- |
+| **Stage 1: Pre-Startup Infra** | `agent_started == false` with fatal infra error | `infra` | Never `agent` |
+| **Stage 1b: Pre-Startup Silent** | `agent_started == false` with no infra evidence | `unknown` | Never `agent` |
+| **Stage 2: Case Assets/Setup** | Missing prompt assets or broken container setup | `case` | Never `agent` |
+| **Stage 3: Verifier Crash / Defect**| Internal verifier crash or direct-bound parser defect | `verifier` | Never `agent` or `unknown` (isolated crash) |
+| **Stage 4: Numerical Tolerance** | Instantaneous trajectory drift with matching ensemble | `verifier` (if verified) | Never `agent` (abstain to `unknown` if unproven)|
+| **Stage 5: Agent Decision** | Positive agent behavioral/trajectory error | `agent` | Never assign without positive evidence |
+
+### Necessary Gate Conditions for Blaming the Agent
 
 You may assign `primary_root_cause.category = "agent"` **ONLY IF ALL FIVE** of the following conditions hold (plus at least one positive agent evidence reference):
 
@@ -47,7 +61,7 @@ You may assign `primary_root_cause.category = "agent"` **ONLY IF ALL FIVE** of t
 When `verifier/verify.log` outputs an error or `FAIL: <msg>`:
 
 - **Check 1 — Verifier Internal Crash (`VERIFIER_RECOMPUTE_DEFECT`)**:
-  If `verify.py` crashes on its own internal paths/files (e.g., `FileNotFoundError: /tmp/verify_tmp/refs.json`, unhandled `Traceback` in `verify.py` unrelated to required agent outputs), classify as `verifier` (`VERIFIER_RECOMPUTE_DEFECT`), NEVER `agent`.
+  If `verify.py` crashes on its own internal paths/files (e.g., `FileNotFoundError: /tmp/verify_tmp/refs.json`, unhandled `Traceback` in `verify.py` unrelated to required agent outputs) with no earlier infra or case defects, classify strictly as `verifier` (`VERIFIER_RECOMPUTE_DEFECT`), NEVER `agent` or `unknown`.
 - **Check 2 — Causally Bound Parser/Regex Soundness (`failure_binding == "direct"`)**:
   Static parser hazards in `verify.py` (such as Fortran `D+03` exponent omission or namelist `/` truncation) may ONLY be assigned as `primary_root_cause.category = "verifier"` when `failure_binding == "direct"` (i.e., the failing line/field actually failed parsing due to that regex). If `1.23D+03` merely appears as a printed reference number while the agent wrote `9.99E+02`, `failure_binding` is `"none"` and `verifier` must NOT be blamed.
 - **Check 3 — Hidden Column/Format Assumptions (`VERIFIER_HIDDEN_CONTRACT`)**:
@@ -57,6 +71,9 @@ When `verifier/verify.log` outputs an error or `FAIL: <msg>`:
 
 ## 4. Numerical Attribution & Competing Hypothesis Rules
 
-- **Structured Numerical Evidence Required**: When structured pointwise trajectory divergence occurs alongside matching ensemble averages or conserved quantities, classify as `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`), not `agent`. Never classify from a bare keyword like `chaotic` without structured comparison (abstains to `unknown`).
+- **Closed-Loop Numerical Verification**: Numerical trajectory drift requires a three-way closed-loop between `instruction.md`, `tests/verify.py`, and `verifier/verify.log`:
+  1. If `instruction.md` explicitly required exact pointwise trajectory matching, the verifier tolerance is NOT at fault (abstain to `unknown` or evaluate agent/case).
+  2. Only classify as `verifier` (`VERIFIER_TOLERANCE_TOO_STRICT`) when `instruction.md` did NOT mandate pointwise matching, `tests/verify.py` asserted instantaneous trajectory/coordinates without ensemble tolerance, and `verify.log` binds failure to instantaneous RMSD while ensemble averages match.
+  3. When task definition or verifier code is missing or unproven, abstain conservatively to `unknown` (`UNKNOWN_INSUFFICIENT_EVIDENCE`).
 - **Competing Hypotheses**: Every failed/errored case MUST populate `competing_hypotheses` (`candidate-hypotheses.json`) and `first_unrecovered_deviation`.
 - **Calibrated Confidence**: Confidence scores (`confidence_kind = "heuristic_evidence_score"`, `evidence_strength = "high" | "medium" | "low"`) are computed from evidence counts, multi-source corroboration, and competing hypothesis separation (`scripts/confidence.py`).

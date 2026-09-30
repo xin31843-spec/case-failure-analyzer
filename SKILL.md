@@ -29,9 +29,12 @@ Require or discover:
 ### Default Behavior & Boundaries
 
 - **Static Post-hoc Audit**: Designed for completed jobs and trials; not an active runner daemon or real-time event watcher.
-- **Read-only by default on inputs**: Never modifies `tasks/`, `jobs/`, or `tests/verify.py`.
+- **Strict Read-Only Input Protection**: Never modifies `tasks/`, `jobs/`, or `tests/verify.py`. `--output` cannot be identical to, inside, or a parent of `--job` or `--task` (including via symlinks); any path overlap exits with code `2` with zero disk writes.
+- **Staging Lifecycle & Atomic Publication**: Analysis is staged into an isolated temporary directory and published to `--output` only upon complete success. Publishing cleans only managed trial artifacts (`evidence.json`, `candidate-hypotheses.json`, `analysis.json`, `report*.md`, `skill-prescription*.md`, `job_summary.json`) across single/multi-trial switches, preserving all user-authored files.
 - **Deterministic Evidence Extraction + Model Causal Reasoning**: Deterministic scripts extract `evidence.json` and `candidate-hypotheses.json`; the Agent evaluates competing hypotheses per `references/attribution-protocol.md` (or validates the conservative draft in `analysis.json`).
 - **Evidence-first attribution**: Never assigns a root cause from a single keyword match. Separates **failure manifestation (symptom)**, **detection stage**, and **primary root cause**.
+- **Closed-Loop Three-Way Verification**: Numerical and parser defects require closed-loop corroboration between `instruction.md` (Prompt), `tests/verify.py` (Verifier rules), and runtime logs (`verify.log`). When prompt mandates exact pointwise trajectory or when verifier code is unproven, strict tolerance claims abstain to `unknown`.
+- **Causal Precedence Timeline**: Enforces strict chronological causality: `Infra (pre-startup)` ➔ `Case (missing assets/setup defect)` ➔ `Verifier (internal crash/defect)` ➔ `Agent (positive deviation)`. Isolated verifier crashes strictly attribute to `verifier` (`VERIFIER_RECOMPUTE_DEFECT`) and forbid `agent` or `unknown`.
 - **Positive-evidence gate for Agent blame**: Never defaults to `agent` when other gates do not fire. Requires positive agent causal evidence (`behavioral_signals`, `agent_mismatch` contract, or unrecovered trajectory scientific errors tied to agent decisions). Ordinary trajectory events or unexplained verifier mismatches converge to `unknown`.
 - **Calibrated uncertainty**: Outputs `unknown` (`UNKNOWN_INSUFFICIENT_EVIDENCE`) when evidence cannot distinguish competing hypotheses.
 - **Concise Bilingual Report Output**: Always produces concise Chinese-English bilingual `report.md` (along with standalone `report.zh.md` and `report.en.md`, plus bilingual `skill-prescription.md` when eligible).
@@ -42,7 +45,7 @@ Require or discover:
 - Supported trajectory schemas: `ATIF-v1.7` (primary), plus `ATIF-v1.6` / `ATIF-v1.5`.
 - Output schema version: `failure-analysis-v1` (see `references/evidence-schema.md` and `references/report-schema.md`).
 - Bilingual output is mandatory for `--phase all`: `report.md`, `report.zh.md`, `report.en.md`, and `skill-prescription.md` only when eligible.
-- Invalid inputs (missing `--job` or `--output`, non-existent `--job`/`--task`, unknown `--trial`, empty job tree without job-level evidence) exit with code `2` and write nothing.
+- Invalid inputs (missing `--job` or `--output`, non-existent `--job`/`--task`, unknown `--trial`, path overlap between `--output` and `--job`/`--task`, empty job tree without job-level evidence) exit with code `2` and write nothing.
 - `analysis.json` carries an optional `decision_trace` recording which gate was evaluated, why each abstained, and which one was selected. It is additive and never required: a hand-authored or model-written `analysis.json` validates without one.
 - `evidence.json` carries an optional `diagnostics` list recording any recovery that degraded evidence (an unparseable `tests/verify.py` or `verifier/reward.txt`). A non-empty list means some conclusion rests on less than the artifacts appear to show; the same records are printed to stderr.
 

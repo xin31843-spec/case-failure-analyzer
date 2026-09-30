@@ -80,12 +80,22 @@ def extract_prompt_contract(instruction_text: str, task_dir: Optional[Path]) -> 
         re.search(r"thermo_style\s+custom\s+\S+", instruction_text, re.IGNORECASE)
     )
 
+    # 5. Check whether prompt explicitly mandates pointwise exact trajectory reproduction
+    specifies_pointwise_trajectory = bool(
+        re.search(
+            r"(?:exact\s+trajectory|exact\s+coordinates|step-by-step\s+trajectory|pointwise\s+trajectory|exact\s+position\s+at\s+each\s+step|instantaneous\s+coordinate\s+matching)",
+            instruction_text,
+            re.IGNORECASE,
+        )
+    )
+
     return {
         "json_keys": json_keys,
         "asset_refs": asset_refs,
         "missing_prompt_assets": missing_prompt_assets,
         "output_files": sorted(output_files),
         "specifies_thermo_columns": specifies_thermo_columns,
+        "specifies_pointwise_trajectory": specifies_pointwise_trajectory,
     }
 
 
@@ -300,12 +310,34 @@ def inspect_verifier_code(verify_py_path: Optional[Path]) -> Dict[str, Any]:
             }
         )
 
+    # Hazard 4: Verifier checks instantaneous trajectory RMSD / per-step coordinates rather than ensemble averages
+    checks_instantaneous_trajectory = bool(
+        re.search(
+            r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd)",
+            code_text,
+            re.IGNORECASE,
+        )
+    )
+    if checks_instantaneous_trajectory:
+        hazards.append(
+            {
+                "hazard_type": "VERIFIER_TOLERANCE_DEFECT",
+                "subtype": "instantaneous_trajectory_rmsd",
+                "affected_parser": "trajectory_rmsd",
+                "description": (
+                    "Verifier evaluates instantaneous trajectory coordinates or RMSD deviation "
+                    "rather than ensemble statistics."
+                ),
+            }
+        )
+
     return {
         "exists": True,
         "checked_files": visitor.checked_files,
         "checked_keys": visitor.checked_keys,
         "regex_patterns": visitor.regex_patterns,
         "hazards": hazards,
+        "checks_instantaneous_trajectory": checks_instantaneous_trajectory,
         "diagnostics": diagnostics,
     }
 
@@ -593,6 +625,80 @@ def audit_contract(
                 binding_evidence = ["ver:fail_log"]
                 affected_input = d_matches[0].group(0)
             elif d_matches:
+                failure_binding = "none"
+        elif sub == "instantaneous_trajectory_rmsd":
+            has_ensemble_match = bool(
+                re.search(
+                    r"(?:ensemble average matches|ensemble.*within tolerance|conserved.*matches)",
+                    verify_log_text,
+                    re.IGNORECASE,
+                )
+            )
+            has_trajectory_metric = bool(
+                re.search(
+                    r"(?:trajectory_rmsd\s*=\s*[\d.]+|instantaneous_position.*?>\s*[\d.]+|coord(?:inate)?_rmsd\s*=\s*[\d.]+)",
+                    verify_log_text,
+                    re.IGNORECASE,
+                )
+            )
+            failure_lines = [
+                line.strip()
+                for line in verify_log_text.splitlines()
+                if re.search(
+                    r"^(?:FAIL\b|AssertionError\b|Error\b|FAILED\b)|(?:^assert\s+)",
+                    line.strip(),
+                    re.IGNORECASE,
+                )
+            ]
+            if failure_lines:
+                bound_to_failure = any(
+                    re.search(
+                        r"(?:trajectory_rmsd|instantaneous_position|coord(?:inate)?_rmsd).*?>|assert.*?(?:trajectory|rmsd|position)|FAIL.*?(?:trajectory|instantaneous|rmsd)",
+                        fline,
+                        re.IGNORECASE,
+                    )
+                    for fline in failure_lines
+                )
+            else:
+                bound_to_failure = bool(
+                    re.search(
+                        r"(?:trajectory_rmsd|instantaneous_position).*?>",
+                        verify_log_text,
+                        re.IGNORECASE,
+                    )
+                )
+
+            if (
+                has_ensemble_match
+                and has_trajectory_metric
+                and bound_to_failure
+                and not prompt_info["specifies_pointwise_trajectory"]
+            ):
+                triggered = True
+                failure_binding = "direct"
+                binding_evidence = ["ver:fail_log"]
+                affected_input = "trajectory"
+                contract_observations.append(
+                    {
+                        "contract_id": f"contract:{cid}",
+                        "item": "trajectory:instantaneous_rmsd",
+                        "prompt_requirement": "ensemble_consistency",
+                        "verifier_requirement": "instantaneous_trajectory_rmsd",
+                        "agent_output_status": "ensemble_matches_trajectory_diverges",
+                        "alignment": "verifier_defect",
+                        "details": (
+                            "Verifier evaluated instantaneous trajectory/position divergence rather than ensemble averages, "
+                            "despite physical/numerical chaos and matching ensemble statistics."
+                        ),
+                        "source_refs": [
+                            "task:instruction.md",
+                            "task:tests/verify.py",
+                            "verifier/verify.log",
+                        ],
+                    }
+                )
+                cid += 1
+            elif has_trajectory_metric:
                 failure_binding = "none"
 
         verifier_observations.append(

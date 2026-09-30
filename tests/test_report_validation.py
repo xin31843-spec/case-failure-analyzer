@@ -159,10 +159,33 @@ class TestGoldenCasesAndValidation(unittest.TestCase):
                     "summary": "Verifier crashed internally",
                 }
             ]
-            # an has category='agent' -> must fail VERIFIER_CRASH_BLAME
+            # an has category='agent' -> must fail VERIFIER_CRASH_BLAME and VERIFIER_CRASH_PRIORITY
             ok, errors = validate_all(ev_crash, an, rep)
             self.assertFalse(ok)
             self.assertTrue(any("VERIFIER_CRASH_BLAME" in e for e in errors))
+            self.assertTrue(any("VERIFIER_CRASH_PRIORITY" in e for e in errors))
+
+            # an with category='unknown' -> must fail VERIFIER_CRASH_PRIORITY
+            an_unknown = dict(an)
+            an_unknown["primary_root_cause"] = {
+                "category": "unknown",
+                "code": "UNKNOWN_INSUFFICIENT_EVIDENCE",
+                "summary": "Incomplete logs",
+            }
+            an_unknown["competing_hypotheses"] = [
+                {
+                    "hypothesis_id": "H1",
+                    "category": "unknown",
+                    "claim": "Insufficient logs",
+                    "evidence_for": ["ver:fail_log"],
+                    "evidence_against": [],
+                    "missing_evidence": [],
+                    "counterfactual_test": "Inspect logs",
+                }
+            ]
+            ok_unk, errors_unk = validate_all(ev_crash, an_unknown, rep)
+            self.assertFalse(ok_unk)
+            self.assertTrue(any("VERIFIER_CRASH_PRIORITY" in e for e in errors_unk))
 
     def test_validator_rejects_unbound_verifier_hazard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

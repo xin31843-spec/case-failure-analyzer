@@ -29,13 +29,16 @@ def gate3_verifier_defect(ctx: AttributionContext) -> Optional[Dict[str, Any]]:
     verifier_obs = ctx.verifier_obs
 
     verifier_crashes = [v for v in verifier_obs if v.get("type") == "verifier_internal_crash"]
-    verifier_defects = verifier_defect_contracts
+    verifier_defects = [
+        c for c in verifier_defect_contracts if c.get("item") != "trajectory:instantaneous_rmsd"
+    ]
     triggered_hazards = [
         v
         for v in verifier_obs
         if v.get("triggered")
         and v.get("failure_binding") == "direct"
         and v.get("type") != "verifier_internal_crash"
+        and v.get("matched_text") != "instantaneous_trajectory_rmsd"
     ]
 
     if not (verifier_crashes or verifier_defects or triggered_hazards):

@@ -206,17 +206,37 @@ def validate_all(
                     f"infrastructure evidence exists, so category must be 'unknown', got {cat!r}."
                 )
 
-    # Hard Rule 5: Verifier internal crash priority (cannot blame agent)
+    # Hard Rule 5: Verifier internal crash priority (cannot blame agent or be unknown when isolated)
     verifier_crashes = [
         v
         for v in (evidence.get("verifier_observations") or [])
         if v.get("type") == "verifier_internal_crash"
     ]
-    if verifier_crashes and cat == "agent":
-        errors.append(
-            "VERIFIER_CRASH_BLAME violation: verifier internal crash detected, "
-            "primary_root_cause.category cannot be 'agent'."
-        )
+    if verifier_crashes:
+        if cat == "agent":
+            errors.append(
+                "VERIFIER_CRASH_BLAME violation: verifier internal crash detected, "
+                "primary_root_cause.category cannot be 'agent'."
+            )
+        case_defects = [
+            c
+            for c in (evidence.get("contract_observations") or [])
+            if c.get("alignment") == "case_defect"
+        ]
+        causal_infra_errors = [
+            e for e in (evidence.get("error_observations") or []) if e.get("causal_candidate")
+        ]
+        if not causal_infra_errors and not case_defects:
+            if cat != "verifier":
+                errors.append(
+                    f"VERIFIER_CRASH_PRIORITY violation: verifier internal crash detected with no earlier "
+                    f"infra or case defect, primary_root_cause.category must be 'verifier', got {cat!r}."
+                )
+            elif analysis.get("primary_root_cause", {}).get("code") != "VERIFIER_RECOMPUTE_DEFECT":
+                errors.append(
+                    f"VERIFIER_CRASH_PRIORITY violation: verifier internal crash detected, "
+                    f"primary_root_cause.code must be 'VERIFIER_RECOMPUTE_DEFECT', got {analysis.get('primary_root_cause', {}).get('code')!r}."
+                )
 
     valid_ids = collect_valid_evidence_ids(evidence)
 

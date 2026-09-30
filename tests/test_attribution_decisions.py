@@ -286,11 +286,30 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
     (
         "gate4 structured numerical divergence",
         _evidence(
+            contract_observations=[
+                {
+                    "contract_id": "contract:1",
+                    "item": "trajectory:instantaneous_rmsd",
+                    "alignment": "verifier_defect",
+                    "prompt_requirement": "ensemble_consistency",
+                    "verifier_requirement": "instantaneous_trajectory_rmsd",
+                    "agent_output_status": "ensemble_matches_trajectory_diverges",
+                    "details": "Verifier checked instantaneous trajectory rather than ensemble average",
+                }
+            ],
             verifier_observations=[
                 _fail_log(
                     "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 "
                     "(ensemble average matches)"
                 ),
+                {
+                    "obs_id": "ver:hazard:1",
+                    "type": "tolerance_hazard",
+                    "matched_text": "instantaneous_trajectory_rmsd",
+                    "triggered": True,
+                    "failure_binding": "direct",
+                    "summary": "instantaneous trajectory comparison",
+                },
             ],
         ),
         {
@@ -299,6 +318,41 @@ DECISION_TABLE: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = [
             "code": "VERIFIER_TOLERANCE_TOO_STRICT",
             "verdict": "failed",
         },
+    ),
+    (
+        "gate4 abstains when prompt specifies pointwise trajectory",
+        _evidence(
+            contract_observations=[
+                {
+                    "contract_id": "contract:1",
+                    "item": "trajectory:instantaneous_rmsd",
+                    "alignment": "verifier_defect",
+                    "prompt_requirement": "pointwise_exact",
+                    "verifier_requirement": "instantaneous_trajectory_rmsd",
+                    "agent_output_status": "ensemble_matches_trajectory_diverges",
+                    "details": "Prompt mandated pointwise trajectory",
+                }
+            ],
+            verifier_observations=[
+                _fail_log(
+                    "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 "
+                    "(ensemble average matches)"
+                ),
+            ],
+        ),
+        {"not_gate_id": "gate4_numerical_divergence", "not_category": "verifier"},
+    ),
+    (
+        "gate4 abstains when contract loop is unproven",
+        _evidence(
+            verifier_observations=[
+                _fail_log(
+                    "FAIL: instantaneous_position trajectory_rmsd=0.45 > 0.01 "
+                    "(ensemble average matches)"
+                ),
+            ],
+        ),
+        {"not_gate_id": "gate4_numerical_divergence", "not_category": "verifier"},
     ),
     (
         "gate4 abstains on a bare keyword (rule 1)",

@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -228,6 +230,105 @@ KNOWN_TRIAL_ARTIFACTS = {
     "skill-prescription.zh.md",
     "skill-prescription.en.md",
 }
+KNOWN_ROOT_ARTIFACTS = {"job_summary.json"}
+
+
+def _clean_managed_trial_dir(target_dir: Path, allowed_files: Set[str]) -> None:
+    """Remove known managed trial files in target_dir that are not in allowed_files."""
+    if not target_dir.is_dir():
+        return
+    for fname in KNOWN_TRIAL_ARTIFACTS:
+        if fname not in allowed_files:
+            fpath = target_dir / fname
+            if fpath.is_file():
+                fpath.unlink()
+
+
+def _paths_overlap(p1: Path, p2: Path) -> bool:
+    """Check if p1 and p2 are identical, or if either is a parent/child of the other (resolving symlinks)."""
+    try:
+        r1 = p1.resolve()
+        r2 = p2.resolve()
+    except Exception:
+        r1 = Path(p1.absolute())
+        r2 = Path(p2.absolute())
+    if r1 == r2:
+        return True
+    try:
+        r1.relative_to(r2)
+        return True
+    except ValueError:
+        pass
+    try:
+        r2.relative_to(r1)
+        return True
+    except ValueError:
+        pass
+    return False
+
+
+def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial: bool) -> None:
+    """Atomically publish staging directory contents into out_dir, cleaning only managed artifacts."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if not is_multi_trial:
+        # Single-trial mode:
+        # 1. Purge root job_summary.json if present
+        stale_root_summary = out_dir / "job_summary.json"
+        if stale_root_summary.is_file():
+            stale_root_summary.unlink()
+
+        # 2. Purge stale root trial files not present in staging
+        staged_files = {p.name for p in staging_dir.iterdir() if p.is_file()}
+        _clean_managed_trial_dir(out_dir, allowed_files=staged_files)
+
+        # 3. Clean any old trial subdirectories from previous multi-trial runs if they contain managed files
+        for child in list(out_dir.iterdir()):
+            if child.is_dir() and child.resolve() != staging_dir.resolve():
+                for m_file in KNOWN_TRIAL_ARTIFACTS:
+                    m_path = child / m_file
+                    if m_path.is_file():
+                        m_path.unlink()
+                try:
+                    child.rmdir()
+                except OSError:
+                    pass  # Retain directory if user files are present
+
+        # 4. Copy staged files into out_dir
+        for p in staging_dir.iterdir():
+            if p.is_file():
+                dest = out_dir / p.name
+                shutil.copy2(p, dest)
+    else:
+        # Multi-trial mode:
+        # 1. Purge root trial files from previous single-trial runs
+        _clean_managed_trial_dir(out_dir, allowed_files=set())
+
+        # 2. Publish each trial directory
+        staged_trial_dirs = {p.name for p in staging_dir.iterdir() if p.is_dir()}
+        for p in staging_dir.iterdir():
+            if p.is_dir():
+                t_dest = out_dir / p.name
+                t_dest.mkdir(parents=True, exist_ok=True)
+                staged_trial_files = {tf.name for tf in p.iterdir() if tf.is_file()}
+                _clean_managed_trial_dir(t_dest, allowed_files=staged_trial_files)
+                for tf in p.iterdir():
+                    if tf.is_file():
+                        shutil.copy2(tf, t_dest / tf.name)
+            elif p.is_file():
+                shutil.copy2(p, out_dir / p.name)
+
+        # 3. Clean any old trial subdirectories not in staged_trial_dirs if they contain managed files
+        for child in list(out_dir.iterdir()):
+            if child.is_dir() and child.name not in staged_trial_dirs:
+                for m_file in KNOWN_TRIAL_ARTIFACTS:
+                    m_path = child / m_file
+                    if m_path.is_file():
+                        m_path.unlink()
+                try:
+                    child.rmdir()
+                except OSError:
+                    pass
 
 
 def write_outputs(
@@ -416,6 +517,19 @@ def main() -> None:
         print(f"ERROR: --task path does not exist: {args.task}", file=sys.stderr)
         sys.exit(2)
 
+    if _paths_overlap(args.output, args.job):
+        print(
+            f"ERROR: --output path ({args.output}) cannot be identical to, inside, or a parent of --job path ({args.job}).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if args.task is not None and _paths_overlap(args.output, args.task):
+        print(
+            f"ERROR: --output path ({args.output}) cannot be identical to, inside, or a parent of --task path ({args.task}).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     all_trials = discover_trials(args.job, trial_filter="all")
     if args.trial != "all":
         available = [t.name for t in all_trials]
@@ -448,44 +562,17 @@ def main() -> None:
     trials = discovery.get("trials") or []
     job_dir = Path(discovery["job_dir"])
 
-    if len(trials) == 1:
-        stale_summary = args.output / "job_summary.json"
-        if stale_summary.is_file():
-            stale_summary.unlink()
-        inv = trials[0]
-        if args.phase == "collect":
-            ev, _, _, cand_hyps = collect_case_evidence(
-                inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes
-            )
-            _report_diagnostics(ev)
-            write_outputs(args.output, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format)
-        else:
-            ev, an, rep, skill_md = analyze_single_trial(
-                inv,
-                job_dir=job_dir,
-                max_log_bytes=args.max_log_bytes,
-                replay_mode=args.replay,
-            )
-            _report_diagnostics(ev)
-            write_outputs(args.output, ev, an, rep, skill_md, fmt=args.format)
-    else:
-        summary_rows = []
-        for inv in trials:
-            t_out = args.output / inv["trial_name"]
+    staging_dir = Path(tempfile.mkdtemp(prefix="cfa_staging_"))
+    try:
+        if len(trials) == 1:
+            inv = trials[0]
             if args.phase == "collect":
                 ev, _, _, cand_hyps = collect_case_evidence(
                     inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes
                 )
                 _report_diagnostics(ev)
-                write_outputs(t_out, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format)
-                summary_rows.append(
-                    {
-                        "trial_name": inv["trial_name"],
-                        "verdict": ev["runtime"].get("verdict"),
-                        "agent_started": bool(ev["runtime"].get("agent_started")),
-                        "verifier_started": bool(ev["runtime"].get("verifier_started")),
-                        "phase": "collect",
-                    }
+                write_outputs(
+                    staging_dir, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format
                 )
             else:
                 ev, an, rep, skill_md = analyze_single_trial(
@@ -495,34 +582,65 @@ def main() -> None:
                     replay_mode=args.replay,
                 )
                 _report_diagnostics(ev)
-                write_outputs(t_out, ev, an, rep, skill_md, fmt=args.format)
-                summary_rows.append(
+                write_outputs(staging_dir, ev, an, rep, skill_md, fmt=args.format)
+            _publish_staging_to_output(staging_dir, args.output, is_multi_trial=False)
+        else:
+            summary_rows = []
+            for inv in trials:
+                t_out = staging_dir / inv["trial_name"]
+                if args.phase == "collect":
+                    ev, _, _, cand_hyps = collect_case_evidence(
+                        inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes
+                    )
+                    _report_diagnostics(ev)
+                    write_outputs(t_out, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format)
+                    summary_rows.append(
+                        {
+                            "trial_name": inv["trial_name"],
+                            "verdict": ev["runtime"].get("verdict"),
+                            "agent_started": bool(ev["runtime"].get("agent_started")),
+                            "verifier_started": bool(ev["runtime"].get("verifier_started")),
+                            "phase": "collect",
+                        }
+                    )
+                else:
+                    ev, an, rep, skill_md = analyze_single_trial(
+                        inv,
+                        job_dir=job_dir,
+                        max_log_bytes=args.max_log_bytes,
+                        replay_mode=args.replay,
+                    )
+                    _report_diagnostics(ev)
+                    write_outputs(t_out, ev, an, rep, skill_md, fmt=args.format)
+                    summary_rows.append(
+                        {
+                            "trial_name": inv["trial_name"],
+                            "verdict": an["verdict"],
+                            "agent_started": bool(ev["runtime"].get("agent_started")),
+                            "verifier_started": bool(ev["runtime"].get("verifier_started")),
+                            "failure_stage": an["failure_stage"],
+                            "detection_stage": an["detection_stage"],
+                            "category": an["primary_root_cause"]["category"],
+                            "code": an["primary_root_cause"]["code"],
+                            "confidence": an["primary_root_cause"]["confidence"],
+                        }
+                    )
+            batch_stats = compute_batch_statistics(summary_rows)
+            (staging_dir / "job_summary.json").write_text(
+                json.dumps(
                     {
-                        "trial_name": inv["trial_name"],
-                        "verdict": an["verdict"],
-                        "agent_started": bool(ev["runtime"].get("agent_started")),
-                        "verifier_started": bool(ev["runtime"].get("verifier_started")),
-                        "failure_stage": an["failure_stage"],
-                        "detection_stage": an["detection_stage"],
-                        "category": an["primary_root_cause"]["category"],
-                        "code": an["primary_root_cause"]["code"],
-                        "confidence": an["primary_root_cause"]["confidence"],
-                    }
-                )
-        args.output.mkdir(parents=True, exist_ok=True)
-        batch_stats = compute_batch_statistics(summary_rows)
-        (args.output / "job_summary.json").write_text(
-            json.dumps(
-                {
-                    "job_dir": str(job_dir),
-                    "batch_statistics": batch_stats,
-                    "trials": summary_rows,
-                },
-                indent=2,
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+                        "job_dir": str(job_dir),
+                        "batch_statistics": batch_stats,
+                        "trials": summary_rows,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            _publish_staging_to_output(staging_dir, args.output, is_multi_trial=True)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -42,7 +42,8 @@
       "subtype": "tolerance_too_strict",
       "claim": "Verifier evaluated instantaneous trajectory/position divergence rather than ensemble averages, causing failure despite valid ensemble statistics.",
       "evidence_for": [
-        "ver:fail_log"
+        "ver:fail_log",
+        "contract:1"
       ],
       "evidence_against": [],
       "missing_evidence": [],
@@ -58,7 +59,8 @@
       "claim": "Agent configured wrong ensemble or thermodynamic state.",
       "evidence_for": [],
       "evidence_against": [
-        "ver:fail_log"
+        "ver:fail_log",
+        "contract:1"
       ],
       "missing_evidence": [],
       "counterfactual_test": "Check ensemble average match reported in `verify.log`.",
@@ -68,6 +70,24 @@
     },
     {
       "hypothesis_id": "H3",
+      "category": "verifier",
+      "subtype": "hidden_contract",
+      "code": "VERIFIER_HIDDEN_CONTRACT",
+      "claim": "Verifier evaluated instantaneous trajectory/position divergence rather than ensemble averages, despite physical/numerical chaos and matching ensemble statistics.",
+      "evidence_for": [
+        "contract:1",
+        "ver:hazard:1",
+        "ver:fail_log"
+      ],
+      "evidence_against": [],
+      "missing_evidence": [],
+      "counterfactual_test": "Patch `tests/verify.py` parser/header/schema handling and re-verify existing workspace outputs.",
+      "confidence": 0.67,
+      "confidence_kind": "heuristic_evidence_score",
+      "evidence_strength": "high"
+    },
+    {
+      "hypothesis_id": "H4",
       "category": "agent",
       "subtype": "result_validation",
       "code": "AGENT_RESULT_VALIDATION",
@@ -84,7 +104,8 @@
     }
   ],
   "evidence_refs": [
-    "ver:fail_log"
+    "ver:fail_log",
+    "contract:1"
   ],
   "excluded_hypotheses": [
     {
