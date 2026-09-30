@@ -25,6 +25,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -381,9 +382,17 @@ def _get_publish_lock_path(out_dir: Path) -> Path:
 
 @contextlib.contextmanager
 def _acquire_publish_lock(out_dir: Path):
-    """Acquire an exclusive advisory process lock for out_dir to prevent concurrent publish races."""
+    """Acquire an exclusive advisory process lock for out_dir to prevent concurrent publish races.
+
+    Uses fcntl.flock as primary mechanism; automatically falls back to atomic directory locking
+    (os.mkdir) on network filesystems or platforms where advisory locking is unsupported or fails.
+    """
     lock_path = _get_publish_lock_path(out_dir)
+    lock_dir = lock_path.with_suffix(".lockdir")
     lock_fd = None
+    flock_acquired = False
+    lock_dir_acquired = False
+
     try:
         try:
             lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
@@ -391,29 +400,71 @@ def _acquire_publish_lock(out_dir: Path):
                 import fcntl
 
                 fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            except (ImportError, OSError, AttributeError) as lock_err:
-                print(
-                    f"WARNING: Advisory process locking unavailable or unsupported ({lock_err}); "
-                    "proceeding without concurrency serialization.",
-                    file=sys.stderr,
-                )
-        except OSError as fd_err:
-            print(
-                f"WARNING: Unable to create lock file in temp directory ({lock_path}: {fd_err}); "
-                "proceeding without process lock.",
-                file=sys.stderr,
-            )
+                flock_acquired = True
+            except (ImportError, OSError, AttributeError):
+                flock_acquired = False
+        except OSError:
+            flock_acquired = False
+
+        if not flock_acquired:
+            # Tier 2 fallback: atomic directory locking via os.mkdir
+            deadline = time.time() + 10.0
+            while time.time() < deadline:
+                try:
+                    os.mkdir(str(lock_dir))
+                    (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+                    lock_dir_acquired = True
+                    break
+                except FileExistsError:
+                    pid_file = lock_dir / "pid"
+                    stale = False
+                    if pid_file.is_file():
+                        try:
+                            holder_pid = int(pid_file.read_text(encoding="utf-8").strip())
+                            if not _is_pid_alive(holder_pid):
+                                stale = True
+                        except Exception:
+                            stale = True
+                    else:
+                        stale = True
+
+                    if stale:
+                        try:
+                            if pid_file.is_file():
+                                pid_file.unlink()
+                            os.rmdir(str(lock_dir))
+                            continue
+                        except OSError:
+                            pass
+                    time.sleep(0.05)
+                except OSError as dir_err:
+                    print(
+                        f"WARNING: Process locking fallback unavailable ({dir_err}); "
+                        "proceeding without concurrency serialization.",
+                        file=sys.stderr,
+                    )
+                    break
+
         yield
     finally:
-        if lock_fd is not None:
+        if flock_acquired and lock_fd is not None:
             try:
                 import fcntl
 
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             except Exception:
                 pass
+        if lock_fd is not None:
             try:
                 os.close(lock_fd)
+            except Exception:
+                pass
+        if lock_dir_acquired and lock_dir.is_dir():
+            try:
+                pid_file = lock_dir / "pid"
+                if pid_file.is_file():
+                    pid_file.unlink()
+                os.rmdir(str(lock_dir))
             except Exception:
                 pass
 

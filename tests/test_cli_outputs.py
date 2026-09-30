@@ -561,6 +561,32 @@ class TestLifecycleAndRerun(unittest.TestCase):
         # out_dir remains completely clean
         self.assertEqual(list(out.iterdir()), [])
 
+    def test_acquire_publish_lock_tier2_directory_fallback(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from analyze_case import _acquire_publish_lock, _get_publish_lock_path
+        from unittest.mock import patch
+
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        out.mkdir()
+
+        lock_path = _get_publish_lock_path(out)
+        lock_dir = lock_path.with_suffix(".lockdir")
+
+        with patch("fcntl.flock", side_effect=OSError("NFS lock unsupported")):
+            with _acquire_publish_lock(out):
+                # Fallback to atomic lockdir engaged!
+                self.assertTrue(lock_dir.is_dir())
+                self.assertTrue((lock_dir / "pid").is_file())
+                self.assertEqual(
+                    (lock_dir / "pid").read_text(encoding="utf-8").strip(), str(os.getpid())
+                )
+                self.assertEqual(list(out.iterdir()), [])
+
+        # Lockdir must be cleanly released
+        self.assertFalse(lock_dir.exists())
+        self.assertEqual(list(out.iterdir()), [])
+
     def test_job_as_file_fails_with_exit_code_2(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         fake_job_file = tmp / "job.txt"
