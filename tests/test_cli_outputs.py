@@ -100,6 +100,45 @@ class TestMultiTrialLayout(unittest.TestCase):
         verdicts = {row["trial_name"]: row["verdict"] for row in summary["trials"]}
         self.assertEqual(verdicts, {"trial_a_fail": fail["verdict"], "trial_b_pass": "passed"})
 
+        # Assert job_summary.md and companions are created and contain critical batch summary metrics
+        self.assertTrue((out / "job_summary.md").is_file())
+        self.assertTrue((out / "job_summary.zh.md").is_file())
+        self.assertTrue((out / "job_summary.en.md").is_file())
+
+        job_md = (out / "job_summary.md").read_text(encoding="utf-8")
+        self.assertIn("Total Trials", job_md)
+        self.assertIn("Pass Rate", job_md)
+        self.assertIn("50.0%", job_md)
+        self.assertIn("trial_a_fail", job_md)
+        self.assertIn("trial_b_pass", job_md)
+        self.assertIn("trial_a_fail/report.md", job_md)
+        self.assertIn("trial_b_pass/report.md", job_md)
+        self.assertIn("agent", job_md)
+
+    def test_multi_trial_format_markdown_generates_md_and_suppresses_json(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        proc = run_cli(
+            "--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "all", "--format", "markdown"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue((out / "job_summary.md").is_file())
+        self.assertTrue((out / "job_summary.zh.md").is_file())
+        self.assertTrue((out / "job_summary.en.md").is_file())
+        self.assertFalse((out / "job_summary.json").exists())
+
+    def test_multi_trial_format_json_generates_json_and_suppresses_md(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        proc = run_cli(
+            "--job", str(FIXTURE_JOB), "--output", str(out), "--trial", "all", "--format", "json"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue((out / "job_summary.json").is_file())
+        self.assertFalse((out / "job_summary.md").exists())
+        self.assertFalse((out / "job_summary.zh.md").exists())
+        self.assertFalse((out / "job_summary.en.md").exists())
+
     def test_phase_collect_writes_no_analysis(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         out = tmp / "out"
@@ -221,7 +260,7 @@ class TestLifecycleAndRerun(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         out = tmp / "out"
 
-        # 1. Multi-trial run produces job_summary.json
+        # 1. Multi-trial run produces job_summary.json and job_summary.md
         proc1 = run_cli(
             "--job",
             str(FIXTURE_JOB),
@@ -232,8 +271,11 @@ class TestLifecycleAndRerun(unittest.TestCase):
         )
         self.assertEqual(proc1.returncode, 0, proc1.stderr)
         self.assertTrue((out / "job_summary.json").is_file())
+        self.assertTrue((out / "job_summary.md").is_file())
+        self.assertTrue((out / "job_summary.zh.md").is_file())
+        self.assertTrue((out / "job_summary.en.md").is_file())
 
-        # 2. Single trial run targeting the same output root purges stale job_summary.json
+        # 2. Single trial run targeting the same output root purges stale job_summary.*
         proc2 = run_cli(
             "--job",
             str(FIXTURE_JOB),
@@ -244,6 +286,9 @@ class TestLifecycleAndRerun(unittest.TestCase):
         )
         self.assertEqual(proc2.returncode, 0, proc2.stderr)
         self.assertFalse((out / "job_summary.json").exists())
+        self.assertFalse((out / "job_summary.md").exists())
+        self.assertFalse((out / "job_summary.zh.md").exists())
+        self.assertFalse((out / "job_summary.en.md").exists())
 
     def test_switching_multi_to_single_preserves_user_files_and_cleans_managed(self) -> None:
         tmp = Path(tempfile.mkdtemp())
@@ -254,6 +299,7 @@ class TestLifecycleAndRerun(unittest.TestCase):
         self.assertEqual(proc1.returncode, 0, proc1.stderr)
         self.assertTrue((out / "trial_a_fail" / "report.md").is_file())
         self.assertTrue((out / "job_summary.json").is_file())
+        self.assertTrue((out / "job_summary.md").is_file())
 
         # 2. Add user-authored custom files
         user_root_note = out / "custom_notes.txt"
@@ -269,6 +315,7 @@ class TestLifecycleAndRerun(unittest.TestCase):
         self.assertTrue((out / "evidence.json").is_file())
         self.assertTrue((out / "analysis.json").is_file())
         self.assertFalse((out / "job_summary.json").exists())
+        self.assertFalse((out / "job_summary.md").exists())
 
         # User files are untouched
         self.assertTrue(user_root_note.is_file())
@@ -301,6 +348,7 @@ class TestLifecycleAndRerun(unittest.TestCase):
         self.assertFalse((out / "report.md").exists())
         self.assertFalse((out / "evidence.json").exists())
         self.assertTrue((out / "job_summary.json").is_file())
+        self.assertTrue((out / "job_summary.md").is_file())
 
         # Multi-trial subdirs exist
         self.assertTrue((out / "trial_a_fail" / "report.md").is_file())
@@ -746,6 +794,179 @@ class TestLifecycleAndRerun(unittest.TestCase):
             "E   trajectory_rmsd = 0.45 > 0.05 tolerance\n"
         )
         self.assertTrue(is_causally_bound_numerical_failure(log))
+
+
+class TestLanguageCliOption(unittest.TestCase):
+    def test_lang_zh_generates_pure_chinese_report(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        proc = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "trial_b_pass", "--output", str(out), "--lang", "zh"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue((out / "report.md").is_file())
+        self.assertTrue((out / "report.zh.md").is_file())
+        self.assertFalse((out / "report.en.md").exists())
+
+        rep_text = (out / "report.md").read_text(encoding="utf-8")
+        self.assertIn("## 1. 评测裁定与通过概览", rep_text)
+        self.assertIn("## 2. 验证证据与产物索引", rep_text)
+        self.assertNotIn("Verdict & Pass Summary", rep_text)
+
+        # Also test on a failed trial
+        out_fail = tmp / "out_fail"
+        proc_fail = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "trial_a_fail", "--output", str(out_fail), "--lang", "zh"
+        )
+        self.assertEqual(proc_fail.returncode, 0, proc_fail.stderr)
+        fail_rep = (out_fail / "report.md").read_text(encoding="utf-8")
+        self.assertIn("## 1. 诊断结论与运行态概览", fail_rep)
+        self.assertNotIn("Verdict & Root Cause Summary", fail_rep)
+
+    def test_lang_en_generates_pure_english_report(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+        proc = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "trial_b_pass", "--output", str(out), "--lang", "en"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue((out / "report.md").is_file())
+        self.assertTrue((out / "report.en.md").is_file())
+        self.assertFalse((out / "report.zh.md").exists())
+
+        rep_text = (out / "report.md").read_text(encoding="utf-8")
+        self.assertIn("## 1. Verdict & Pass Summary", rep_text)
+        self.assertIn("## 2. Verification Evidence & Artifacts", rep_text)
+        self.assertNotIn("评测裁定与通过概览", rep_text)
+
+        # Also test on a failed trial
+        out_fail = tmp / "out_fail"
+        proc_fail = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "trial_a_fail", "--output", str(out_fail), "--lang", "en"
+        )
+        self.assertEqual(proc_fail.returncode, 0, proc_fail.stderr)
+        fail_rep = (out_fail / "report.md").read_text(encoding="utf-8")
+        self.assertIn("## 1. Verdict & Root Cause Summary", fail_rep)
+        self.assertNotIn("诊断结论与运行态概览", fail_rep)
+
+    def test_lang_bilingual_default_and_explicit(self) -> None:
+        # Default without --lang flag
+        tmp1 = Path(tempfile.mkdtemp())
+        out1 = tmp1 / "out"
+        proc1 = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "trial_b_pass", "--output", str(out1)
+        )
+        self.assertEqual(proc1.returncode, 0, proc1.stderr)
+        self.assertTrue((out1 / "report.md").is_file())
+        self.assertTrue((out1 / "report.zh.md").is_file())
+        self.assertTrue((out1 / "report.en.md").is_file())
+
+        rep1_text = (out1 / "report.md").read_text(encoding="utf-8")
+        self.assertIn("## 1. 评测裁定与通过概览 (Verdict & Pass Summary)", rep1_text)
+
+        # Explicit --lang bilingual on multi-trial batch
+        tmp2 = Path(tempfile.mkdtemp())
+        out2 = tmp2 / "out"
+        proc2 = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "all", "--output", str(out2), "--lang", "bilingual"
+        )
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertTrue((out2 / "job_summary.md").is_file())
+        self.assertTrue((out2 / "job_summary.zh.md").is_file())
+        self.assertTrue((out2 / "job_summary.en.md").is_file())
+
+        job_md = (out2 / "job_summary.md").read_text(encoding="utf-8")
+        self.assertIn("Multi-Trial Batch Execution Summary / 多 Trial 批处理执行汇总", job_md)
+
+    def test_lang_multi_trial_batch_zh_and_en(self) -> None:
+        # Batch with --lang zh
+        tmp_zh = Path(tempfile.mkdtemp())
+        out_zh = tmp_zh / "out"
+        proc_zh = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "all", "--output", str(out_zh), "--lang", "zh"
+        )
+        self.assertEqual(proc_zh.returncode, 0, proc_zh.stderr)
+        self.assertTrue((out_zh / "job_summary.md").is_file())
+        self.assertTrue((out_zh / "job_summary.zh.md").is_file())
+        self.assertFalse((out_zh / "job_summary.en.md").exists())
+        self.assertIn("多 Trial 评测任务汇总报告", (out_zh / "job_summary.md").read_text(encoding="utf-8"))
+        self.assertTrue((out_zh / "trial_a_fail" / "report.zh.md").is_file())
+        self.assertFalse((out_zh / "trial_a_fail" / "report.en.md").exists())
+
+        # Batch with --lang en
+        tmp_en = Path(tempfile.mkdtemp())
+        out_en = tmp_en / "out"
+        proc_en = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "all", "--output", str(out_en), "--lang", "en"
+        )
+        self.assertEqual(proc_en.returncode, 0, proc_en.stderr)
+        self.assertTrue((out_en / "job_summary.md").is_file())
+        self.assertTrue((out_en / "job_summary.en.md").is_file())
+        self.assertFalse((out_en / "job_summary.zh.md").exists())
+        self.assertIn("Multi-Trial Batch Execution Summary", (out_en / "job_summary.md").read_text(encoding="utf-8"))
+        self.assertTrue((out_en / "trial_a_fail" / "report.en.md").is_file())
+        self.assertFalse((out_en / "trial_a_fail" / "report.zh.md").exists())
+
+    def test_lang_rerun_purges_stale_language_editions(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        out = tmp / "out"
+
+        # 1. Run default bilingual: produces report.md, report.zh.md, report.en.md
+        proc1 = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "trial_b_pass", "--output", str(out)
+        )
+        self.assertEqual(proc1.returncode, 0, proc1.stderr)
+        self.assertTrue((out / "report.zh.md").is_file())
+        self.assertTrue((out / "report.en.md").is_file())
+
+        # 2. Rerun with --lang zh: report.en.md must be cleanly purged
+        proc2 = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "trial_b_pass", "--output", str(out), "--lang", "zh"
+        )
+        self.assertEqual(proc2.returncode, 0, proc2.stderr)
+        self.assertTrue((out / "report.zh.md").is_file())
+        self.assertFalse((out / "report.en.md").exists())
+
+        # 3. Rerun with --lang en: report.zh.md must be cleanly purged
+        proc3 = run_cli(
+            "--job", str(FIXTURE_JOB), "--trial", "trial_b_pass", "--output", str(out), "--lang", "en"
+        )
+        self.assertEqual(proc3.returncode, 0, proc3.stderr)
+        self.assertTrue((out / "report.en.md").is_file())
+        self.assertFalse((out / "report.zh.md").exists())
+
+
+class TestStagingModuleDecoupling(unittest.TestCase):
+    def test_direct_staging_import_and_reexports(self) -> None:
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import staging
+        from analyze_case import (
+            MANIFEST_FILENAME,
+            acquire_advisory_process_lock,
+            clean_tier2_lock_dir,
+            cleanup_orphaned_cfa_tmp_files,
+            is_pid_alive,
+            is_safe_manifest_relpath,
+            paths_overlap,
+            publish_staging_to_output,
+            publish_staging_to_output_locked,
+            release_advisory_process_lock,
+            validate_input_output_isolation,
+            validate_output_writable,
+        )
+
+        self.assertEqual(MANIFEST_FILENAME, staging.MANIFEST_FILENAME)
+        self.assertIs(publish_staging_to_output, staging.publish_staging_to_output)
+        self.assertIs(publish_staging_to_output_locked, staging.publish_staging_to_output_locked)
+        self.assertIs(validate_input_output_isolation, staging.validate_input_output_isolation)
+        self.assertIs(validate_output_writable, staging.validate_output_writable)
+        self.assertIs(acquire_advisory_process_lock, staging.acquire_advisory_process_lock)
+        self.assertIs(release_advisory_process_lock, staging.release_advisory_process_lock)
+        self.assertIs(clean_tier2_lock_dir, staging.clean_tier2_lock_dir)
+        self.assertIs(paths_overlap, staging.paths_overlap)
+        self.assertIs(is_safe_manifest_relpath, staging.is_safe_manifest_relpath)
+        self.assertIs(is_pid_alive, staging.is_pid_alive)
+        self.assertIs(cleanup_orphaned_cfa_tmp_files, staging.cleanup_orphaned_cfa_tmp_files)
 
 
 if __name__ == "__main__":

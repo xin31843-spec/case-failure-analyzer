@@ -47,7 +47,7 @@ case-failure-analyzer/
 ├── .gitignore                   # Local-artifact and build-cache exclusions
 ├── SKILL.md                     # Skill entrypoint & runtime contract (agent-facing, English only)
 ├── README.md / README.zh.md     # Project overview & CLI usage (bilingual EN | 简体中文)
-├── Makefile                     # Engineering entrypoints: test, lint, smoke, check-docs, clean
+├── Makefile                     # Engineering entrypoints: test, lint, smoke, check-docs, export-skill, clean
 ├── pyproject.toml               # Package metadata and optional [dev] extras
 ├── agents/
 │   └── openai.yaml              # codex runtime interface metadata
@@ -60,6 +60,7 @@ case-failure-analyzer/
 │   └── software/                # 11 per-software knowledge bases (cp2k, vasp-abacus, lammps, mlip, ...)
 ├── scripts/                     # Deterministic evidence pipeline & reporting
 │   ├── analyze_case.py          # CLI entrypoint: collect -> attribute -> render
+│   ├── staging.py               # Staging lifecycle, advisory file locking, input isolation & transactional manifest publishing
 │   ├── validate_analysis.py     # Schema & invariant validator (hard rules)
 │   ├── render_report.py         # Bilingual report & skill-prescription renderer
 │   ├── *.py                     # Evidence modules: artifact discovery, runtime state, trajectory
@@ -87,18 +88,31 @@ SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
 python3 "$SKILL_DIR/scripts/analyze_case.py" \
   --job jobs/<job_name> \
   --task tasks/<task_name> \
-  --output failure-analysis/<case_id>
+  --output failure-analysis/<case_id> \
+  --lang bilingual
 ```
+
+#### CLI Parameters
+
+- `--job`: Job directory (`jobs/<job_name>`) or specific trial directory (Required).
+- `--output`: Output directory for evidence, analysis, and reports (Required; strictly read-only on inputs, paths cannot overlap).
+- `--task`: Task definition directory path (Optional; auto-discovered if omitted).
+- `--trial`: Specific trial name or `all` (default: `all`).
+- `--lang`: Report language edition: `bilingual` (default), `zh` (standalone Chinese), or `en` (standalone English).
+- `--format`: Output format: `both` (default), `json`, or `markdown`.
+- `--phase`: Execution phase: `all` (default: full pipeline + conservative attribution + reports) or `collect` (evidence + candidate hypotheses only).
 
 Outputs generated in `failure-analysis/<case_id>/`:
 
 - `evidence.json`: Objective per-trial artifacts, unified `runtime_state`, normalized trajectory timeline, contract audit matrix, and scientific error observations.
 - `candidate-hypotheses.json`: Competing root-cause hypotheses with heuristic evidence strength scores.
 - `analysis.json`: Causal attribution (`failure-analysis-v1`) — a conservative deterministic draft under `--phase all`.
-- `report.md`: Combined Chinese-English bilingual report covering all 4 high-signal core review sections.
-- `report.zh.md`: Standalone Chinese report.
-- `report.en.md`: Standalone English report.
+- `report.md`: Combined Chinese-English bilingual report covering all 4 high-signal core review sections (for passed cases: dedicated lightweight 2-section view < 30 lines without failure semantics).
+- `report.zh.md`: Standalone Chinese report (lightweight 2-section view for passed cases).
+- `report.en.md`: Standalone English report (lightweight 2-section view for passed cases).
 - `skill-prescription.md` (plus `skill-prescription.zh.md` and `skill-prescription.en.md`): Bilingual domain skill prescription (generated **only** for reusable Agent capability gaps).
+- `job_summary.md`: Multi-trial batch Markdown dashboard summarizing verdicts, categories, root causes, and failure stages across all trials (using relative identifiers, zero machine-specific path leaks).
+- `job_summary.json`: Multi-trial batch structured statistics and summary records.
 
 ### 2. Evidence & Candidate Hypothesis Collection Only (`--phase collect`)
 
@@ -153,6 +167,7 @@ The runtime is stdlib-only; the test tooling is not. `make test` needs no instal
 make test          # canonical: python3 -m unittest discover -s tests -t .
 make compile       # syntax check over scripts/ and tests/
 make smoke         # end-to-end CLI run against the committed 2-trial fixture
+make export-skill  # export clean skill tree to DEST (default: $CODEX_HOME/skills/case-failure-analyzer)
 make dev           # optional: install the [dev] extra (pytest)
 make test-pytest   # optional pytest run
 make help          # list all targets
@@ -164,6 +179,22 @@ Without `make`, the equivalent commands are:
 python3 -m unittest discover -s tests -t .
 python3 -m pytest -q          # only after `make dev`
 ```
+
+---
+
+## Exporting Production Skill
+
+Export a clean, production-ready skill tree (`SKILL.md`, `agents/`, `scripts/`, `references/`) excluding test suites (`tests/`), local documentation mirrors (`docs/`), and developer build configurations (`Makefile`, `pyproject.toml`, `uv.lock`, `.ruff_cache`, `.venv`, `.git`, `failure-analysis/`, etc.):
+
+```bash
+# Export to default destination ($CODEX_HOME/skills/case-failure-analyzer or ~/.codex/skills/case-failure-analyzer)
+make export-skill
+
+# Or export to a custom destination
+make export-skill DEST=/path/to/target/case-failure-analyzer
+```
+
+The export workflow is powered by `scripts/export_skill.py`, which enforces destination path safety (refusing `/`, `$HOME`, or the repository root) and non-destructive synchronization (preserving user custom files in the destination while tracking managed files in `.cfa_export_manifest.json`).
 
 ### Interactive diagnostics
 

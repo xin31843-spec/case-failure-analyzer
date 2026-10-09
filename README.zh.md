@@ -47,7 +47,7 @@ case-failure-analyzer/
 ├── .gitignore                   # 本地产物与构建缓存的排除规则
 ├── SKILL.md                     # Skill 入口与运行时契约（面向 Agent，仅英文）
 ├── README.md / README.zh.md     # 项目概览与命令行用法（英文 | 简体中文双语）
-├── Makefile                     # 工程化入口：test、lint、smoke、check-docs、clean
+├── Makefile                     # 工程化入口：test、lint、smoke、check-docs、export-skill、clean
 ├── pyproject.toml               # 包元数据与可选 [dev] 依赖
 ├── agents/
 │   └── openai.yaml              # codex 运行时接口元数据
@@ -60,6 +60,7 @@ case-failure-analyzer/
 │   └── software/                # 11 个分软件知识库（cp2k、vasp-abacus、lammps、mlip 等）
 ├── scripts/                     # 确定性证据流水线与报告渲染
 │   ├── analyze_case.py          # CLI 入口：collect -> attribute -> render
+│   ├── staging.py               # 暂存区生命周期、建议性文件锁、输入隔离与清单事务发布
 │   ├── validate_analysis.py     # Schema 与硬规则校验器
 │   ├── render_report.py         # 双语报告与技能处方渲染器
 │   ├── *.py                     # 证据模块：产物发现、运行态、轨迹标准化、契约审计、
@@ -87,17 +88,30 @@ SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/case-failure-analyzer"
 python3 "$SKILL_DIR/scripts/analyze_case.py" \
   --job jobs/<job_name> \
   --task tasks/<task_name> \
-  --output failure-analysis/<case_id>
+  --output failure-analysis/<case_id> \
+  --lang bilingual
 ```
+
+#### 命令行参数说明
+
+- `--job`：作业目录（`jobs/<job_name>`）或具体 Trial 目录（必选）。
+- `--output`：证据、分析与报告的输出目录（必选；严格保障输入只读，禁止与输入路径重叠）。
+- `--task`：任务定义目录路径（可选；省略时自动发现）。
+- `--trial`：指定 Trial 名称或 `all`（默认：`all`）。
+- `--lang`：报告语言版本：`bilingual`（默认，中英双语合订）、`zh`（独立纯中文版）或 `en`（独立纯英文版）。
+- `--format`：输出格式：`both`（默认）、`json` 或 `markdown`。
+- `--phase`：执行阶段：`all`（默认：全流水线+保守归因+报告渲染）或 `collect`（仅采集客观证据与候选假设）。
 
 在 `failure-analysis/<case_id>/` 目录下生成的输出文件：
 - `evidence.json`：单 Trial 客观产物清单、统一运行态 `runtime_state`、标准化轨迹时间线、三方契约审计矩阵及科学软件错误观测。
 - `candidate-hypotheses.json`：带启发式证据强度评分的竞争根因假设列表。
 - `analysis.json`：因果归因结构化结果（`failure-analysis-v1`）——在 `--phase all` 下默认生成保守的确定性草稿。
-- `report.md`：**中英双语合订审计报告**（包含 4 个高信噪比核心板块与按需展开的动态子块）。
-- `report.zh.md`：独立纯中文审计报告。
-- `report.en.md`：独立纯英文审计报告。
+- `report.md`：**中英双语合订审计报告**（失败案例包含 4 个核心板块；通过案例精简为 < 30 行轻量视图，彻底剔除失败语义）。
+- `report.zh.md`：独立纯中文审计报告（通过案例自动切换为 2 章节轻量视图）。
+- `report.en.md`：独立纯英文审计报告（通过案例自动切换为 2 章节轻量视图）。
 - `skill-prescription.md`（及 `skill-prescription.zh.md`、`skill-prescription.en.md`）：中英双语领域技能处方（**仅**在判定为可复用的 Agent 能力缺口时生成）。
+- `job_summary.md`：多 Trial 批处理 Markdown 看板，汇总全部 Trial 的判定结果、归因类别、根因代码与失败阶段（采用相对标识符，杜绝本机绝对路径泄漏）。
+- `job_summary.json`：多 Trial 批处理结构化聚合统计与每 Trial 摘要记录。
 
 ### 2. 仅执行证据采集与候选假设生成 (`--phase collect`)
 
@@ -152,6 +166,7 @@ python3 "$SKILL_DIR/scripts/render_report.py" \
 make test          # 规范命令：python3 -m unittest discover -s tests -t .
 make compile       # 对 scripts/ 与 tests/ 做语法检查
 make smoke         # 针对已提交的双 trial fixture 做端到端 CLI 运行
+make export-skill  # 导出纯净生产技能到 DEST（默认: $CODEX_HOME/skills/case-failure-analyzer）
 make dev           # 可选：安装 [dev] 依赖（pytest）
 make test-pytest   # 可选：使用 pytest 运行
 make help          # 列出全部目标
@@ -163,6 +178,22 @@ make help          # 列出全部目标
 python3 -m unittest discover -s tests -t .
 python3 -m pytest -q          # 仅在执行 `make dev` 之后
 ```
+
+---
+
+## 导出生产技能
+
+将生产纯净技能目录（`SKILL.md`、`agents/`、`scripts/`、`references/`）同步导出到目标目录，自动排除单元测试与测试固件（`tests/`）、本地文档镜像（`docs/`）以及开发工程配置（`Makefile`, `pyproject.toml`, `uv.lock`, `.ruff_cache`, `.venv`, `.git`, `failure-analysis/` 等）：
+
+```bash
+# 导出到默认目录（$CODEX_HOME/skills/case-failure-analyzer 或 ~/.codex/skills/case-failure-analyzer）
+make export-skill
+
+# 或导出到自定义目标目录
+make export-skill DEST=/path/to/target/case-failure-analyzer
+```
+
+导出逻辑由 `scripts/export_skill.py` 驱动，内置目标路径安全防护（严禁导出至根目录 `/`、`$HOME` 或源码仓库根目录），并采用非破坏性受控同步（保留目标目录中用户自有的定制文件，通过 `.cfa_export_manifest.json` 追踪受管产物）。
 
 ### 交互式诊断
 

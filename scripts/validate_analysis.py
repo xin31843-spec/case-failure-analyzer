@@ -69,6 +69,11 @@ REQUIRED_REPORT_SECTIONS = [
     (4, "修复行动与处方建议", "Recommended Actions & Notes"),
 ]
 
+REQUIRED_PASSED_REPORT_SECTIONS = [
+    (1, "评测裁定与通过概览", "Verdict & Pass Summary"),
+    (2, "验证证据与产物索引", "Verification Evidence & Artifacts"),
+]
+
 
 def collect_valid_evidence_ids(evidence: Dict[str, Any]) -> Set[str]:
     ids: Set[str] = set()
@@ -133,9 +138,19 @@ def collect_positive_agent_evidence_ids(evidence: Dict[str, Any]) -> Set[str]:
     return pos_ids
 
 
-def validate_report_sections(report_text: str) -> List[str]:
+def validate_report_sections(
+    report_text: str, verdict: Optional[str] = None
+) -> List[str]:
     errors: List[str] = []
-    for num, zh_title, en_title in REQUIRED_REPORT_SECTIONS:
+    is_passed = (verdict == "passed") or bool(
+        re.search(
+            r"(?m)^##\s+1\.\s+(?:评测裁定与通过概览|Verdict & Pass Summary)",
+            report_text,
+        )
+    )
+    sections = REQUIRED_PASSED_REPORT_SECTIONS if is_passed else REQUIRED_REPORT_SECTIONS
+
+    for num, zh_title, en_title in sections:
         # Match start-of-line `## <num>. <zh_title>` or `## <num>. <en_title>`
         header_pat = re.compile(
             rf"(?m)^##\s+{num}\.\s+(?:{re.escape(zh_title)}|{re.escape(en_title)})(?:\s.*)?$"
@@ -369,7 +384,9 @@ def validate_all(
 
     # 9. Optional report.md section & non-empty body validation
     if report_text is not None:
-        errors.extend(validate_report_sections(report_text))
+        errors.extend(
+            validate_report_sections(report_text, verdict=analysis.get("verdict"))
+        )
 
     return len(errors) == 0, errors
 

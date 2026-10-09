@@ -17,16 +17,10 @@ Pipeline:
 from __future__ import annotations
 
 import argparse
-import contextlib
-import hashlib
 import json
-import os
-import re
 import shutil
 import sys
 import tempfile
-import time
-import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -34,17 +28,52 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+import staging
 from audit_contract import audit_contract
 from discover_artifacts import discover_all, discover_trials
 from extract_runtime_errors import extract_runtime_errors, read_text_head_tail
 from extract_scientific_errors import extract_scientific_errors
 from generate_hypotheses import generate_candidate_hypotheses
 from normalize_trajectory import normalize_trajectory
-from render_report import render_report_markdown, render_skill_prescription_markdown
+from render_report import (
+    render_job_summary_markdown,
+    render_report_markdown,
+    render_skill_prescription_markdown,
+)
 from runtime_state import resolve_trajectory_path
+from staging import (
+    acquire_publish_lock,
+    cleanup_orphaned_cfa_tmp_files,
+    get_publish_lock_path,
+    is_pid_alive,
+    is_safe_manifest_relpath,
+    paths_overlap,
+    publish_staging_to_output,
+    publish_staging_to_output_locked,
+    validate_input_output_isolation,
+    validate_output_writable,
+)
 from validate_analysis import validate_all
 from attribution.engine import run_attribution_engine
 from diagnostics import format_diagnostic_line, merge_diagnostics
+
+# Re-exported public constants and helpers from staging
+MANIFEST_FILENAME = staging.MANIFEST_FILENAME
+acquire_advisory_process_lock = staging.acquire_advisory_process_lock
+release_advisory_process_lock = staging.release_advisory_process_lock
+clean_tier2_lock_dir = staging.clean_tier2_lock_dir
+
+# Re-exported aliases for backwards compatibility with tests and consumers
+_paths_overlap = paths_overlap
+_validate_input_output_isolation = validate_input_output_isolation
+_validate_output_writable = validate_output_writable
+_is_safe_manifest_relpath = is_safe_manifest_relpath
+_is_pid_alive = is_pid_alive
+_cleanup_orphaned_cfa_tmp_files = cleanup_orphaned_cfa_tmp_files
+_get_publish_lock_path = get_publish_lock_path
+_acquire_publish_lock = acquire_publish_lock
+_publish_staging_to_output = publish_staging_to_output
+_publish_staging_to_output_locked = publish_staging_to_output_locked
 
 try:
     from verify_check_stats import build_check_stats
@@ -250,6 +279,7 @@ def analyze_single_trial(
     job_dir: Path,
     max_log_bytes: int = 120000,
     replay_mode: str = "none",
+    lang: str = "bilingual",
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, Optional[str]]:
     if replay_mode != "none":
         run_isolated_verifier_replay(
@@ -264,7 +294,7 @@ def analyze_single_trial(
     )
 
     analysis = build_causal_attribution(evidence, norm_traj, contract_res, cand_hyps)
-    report_md = render_report_markdown(evidence, analysis, lang="bilingual")
+    report_md = render_report_markdown(evidence, analysis, lang=lang)
 
     ok, val_errors = validate_all(evidence, analysis, report_md)
     if not ok:
@@ -272,7 +302,7 @@ def analyze_single_trial(
 
     skill_md = None
     if analysis.get("skill_prescription"):
-        skill_md = render_skill_prescription_markdown(analysis["skill_prescription"])
+        skill_md = render_skill_prescription_markdown(analysis["skill_prescription"], lang=lang)
 
     return evidence, analysis, report_md, skill_md
 
@@ -294,437 +324,12 @@ KNOWN_TRIAL_ARTIFACTS = {
     "skill-prescription.zh.md",
     "skill-prescription.en.md",
 }
-KNOWN_ROOT_ARTIFACTS = {"job_summary.json"}
-
-
-MANIFEST_FILENAME = ".cfa_manifest.json"
-
-
-def _paths_overlap(p1: Path, p2: Path) -> bool:
-    """Check if p1 and p2 are identical, or if either is a parent/child of the other (resolving symlinks)."""
-    try:
-        r1 = p1.resolve()
-        r2 = p2.resolve()
-    except Exception:
-        r1 = Path(p1.absolute())
-        r2 = Path(p2.absolute())
-    if r1 == r2:
-        return True
-    try:
-        r1.relative_to(r2)
-        return True
-    except ValueError:
-        pass
-    try:
-        r2.relative_to(r1)
-        return True
-    except ValueError:
-        pass
-    return False
-
-
-def _validate_input_output_isolation(
-    out_dir: Path,
-    input_roots: List[Tuple[Optional[Path], str]],
-    planned_trial_names: List[str],
-) -> None:
-    """Enforce strict read-only boundary between output targets and all inputs."""
-    resolved_inputs: List[Tuple[Path, str]] = []
-    for inp, label in input_roots:
-        if inp is not None:
-            try:
-                resolved_inputs.append((inp.resolve(), label))
-            except Exception:
-                resolved_inputs.append((Path(inp.absolute()), label))
-
-    def _assert_no_overlap(target: Path, target_label: str) -> None:
-        try:
-            r_target = target.resolve()
-        except Exception:
-            r_target = Path(target.absolute())
-        for r_inp, inp_label in resolved_inputs:
-            is_overlap = False
-            if r_target == r_inp:
-                is_overlap = True
-            else:
-                try:
-                    r_target.relative_to(r_inp)
-                    is_overlap = True
-                except ValueError:
-                    pass
-                if not is_overlap:
-                    try:
-                        r_inp.relative_to(r_target)
-                        is_overlap = True
-                    except ValueError:
-                        pass
-            if is_overlap:
-                print(
-                    f"ERROR: {target_label} ({target}) cannot be identical to, inside, or a parent of {inp_label} ({r_inp}).",
-                    file=sys.stderr,
-                )
-                sys.exit(2)
-
-    # 1. Check output root
-    _assert_no_overlap(out_dir, "--output path")
-
-    # 2. Check each planned trial output directory
-    for t_name in planned_trial_names:
-        t_dest = out_dir / t_name
-        _assert_no_overlap(t_dest, f"--output trial directory '{t_name}'")
-
-    # 3. If out_dir exists or is a symlink, inspect its entire tree without following symlinks to reject links into inputs
-    if out_dir.exists() or out_dir.is_symlink():
-        if out_dir.is_symlink():
-            _assert_no_overlap(out_dir, "--output symlink target")
-        for root, dirs, files in os.walk(out_dir, followlinks=False):
-            root_path = Path(root)
-            for d in dirs:
-                d_path = root_path / d
-                _assert_no_overlap(d_path, f"output subdirectory '{d_path.relative_to(out_dir)}'")
-            for f in files:
-                f_path = root_path / f
-                if f_path.is_symlink():
-                    _assert_no_overlap(f_path, f"output symlink '{f_path.relative_to(out_dir)}'")
-
-
-def _is_safe_manifest_relpath(rel_str: Any, out_dir: Path) -> bool:
-    """Validate that rel_str is a safe relative path strictly contained inside out_dir."""
-    if not isinstance(rel_str, str) or not rel_str.strip():
-        return False
-    cleaned = rel_str.strip()
-    p = Path(cleaned)
-    if p.is_absolute() or ".." in p.parts:
-        return False
-    try:
-        resolved_out = out_dir.resolve()
-        resolved_target = (out_dir / p).resolve()
-        if resolved_target == resolved_out:
-            return False
-        resolved_target.relative_to(resolved_out)
-        return True
-    except (ValueError, RuntimeError):
-        return False
-
-
-def _is_pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-def _cleanup_orphaned_cfa_tmp_files(out_dir: Path) -> None:
-    """Clean up abandoned temporary or restore files left by crashed processes in out_dir."""
-    current_pid = os.getpid()
-    for p in out_dir.rglob(".*"):
-        if not p.is_file():
-            continue
-        m = re.search(r"\.(?:cfa_tmp|restore)_(\d+)_[0-9a-fA-F]+$", p.name)
-        if m:
-            try:
-                file_pid = int(m.group(1))
-                if file_pid != current_pid and not _is_pid_alive(file_pid):
-                    p.unlink()
-            except (ValueError, OSError):
-                pass
-
-
-def _get_publish_lock_path(out_dir: Path) -> Path:
-    h = hashlib.sha256(str(out_dir.resolve()).encode("utf-8")).hexdigest()[:16]
-    return Path(tempfile.gettempdir()) / f"cfa_publish_{h}.lock"
-
-
-@contextlib.contextmanager
-def _acquire_publish_lock(out_dir: Path):
-    """Acquire an exclusive advisory process lock for out_dir to prevent concurrent publish races.
-
-    Uses fcntl.flock as primary mechanism; automatically falls back to atomic directory locking
-    (os.mkdir) on network filesystems or platforms where advisory locking is unsupported or fails.
-    """
-    lock_path = _get_publish_lock_path(out_dir)
-    lock_dir = lock_path.with_suffix(".lockdir")
-    lock_fd = None
-    flock_acquired = False
-    lock_dir_acquired = False
-
-    try:
-        try:
-            lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
-            try:
-                import fcntl
-
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
-                flock_acquired = True
-            except (ImportError, OSError, AttributeError):
-                flock_acquired = False
-        except OSError:
-            flock_acquired = False
-
-        if not flock_acquired:
-            # Tier 2 fallback: atomic directory locking via os.mkdir
-            deadline = time.time() + 10.0
-            while time.time() < deadline:
-                try:
-                    os.mkdir(str(lock_dir))
-                    (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
-                    lock_dir_acquired = True
-                    break
-                except FileExistsError:
-                    pid_file = lock_dir / "pid"
-                    stale = False
-                    if pid_file.is_file():
-                        try:
-                            holder_pid = int(pid_file.read_text(encoding="utf-8").strip())
-                            if not _is_pid_alive(holder_pid):
-                                stale = True
-                        except Exception:
-                            stale = True
-                    else:
-                        stale = True
-
-                    if stale:
-                        try:
-                            if pid_file.is_file():
-                                pid_file.unlink()
-                            os.rmdir(str(lock_dir))
-                            continue
-                        except OSError:
-                            pass
-                    time.sleep(0.05)
-                except OSError as dir_err:
-                    print(
-                        f"WARNING: Process locking fallback unavailable ({dir_err}); "
-                        "proceeding without concurrency serialization.",
-                        file=sys.stderr,
-                    )
-                    break
-
-        yield
-    finally:
-        if flock_acquired and lock_fd is not None:
-            try:
-                import fcntl
-
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            except Exception:
-                pass
-        if lock_fd is not None:
-            try:
-                os.close(lock_fd)
-            except Exception:
-                pass
-        if lock_dir_acquired and lock_dir.is_dir():
-            try:
-                pid_file = lock_dir / "pid"
-                if pid_file.is_file():
-                    pid_file.unlink()
-                os.rmdir(str(lock_dir))
-            except Exception:
-                pass
-
-
-def _validate_output_writable(out_dir: Path) -> None:
-    """Ensure out_dir can be created and written to; fail fast with exit code 2 if non-writable."""
-    target = out_dir.resolve()
-    if target.exists() and not target.is_dir():
-        print(f"ERROR: --output path exists and is not a directory: {out_dir}", file=sys.stderr)
-        sys.exit(2)
-
-    probe_file = target / f".cfa_probe_{os.getpid()}_{uuid.uuid4().hex[:8]}"
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-        probe_file.write_text("probe", encoding="utf-8")
-        probe_file.unlink()
-    except Exception as e:
-        print(
-            f"ERROR: --output directory is not writable or cannot be created: {out_dir} ({e})",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-
-
-def _publish_staging_to_output(staging_dir: Path, out_dir: Path, is_multi_trial: bool) -> None:
-    """Publish staging directory contents into out_dir with atomic file replacement and best-effort rollback."""
-    out_dir.resolve().mkdir(parents=True, exist_ok=True)
-    with _acquire_publish_lock(out_dir):
-        _cleanup_orphaned_cfa_tmp_files(out_dir)
-        _publish_staging_to_output_locked(staging_dir, out_dir, is_multi_trial)
-
-
-def _publish_staging_to_output_locked(
-    staging_dir: Path, out_dir: Path, is_multi_trial: bool
-) -> None:
-    """Internal publish logic executed under process lock."""
-    out_dir.resolve().mkdir(parents=True, exist_ok=True)
-
-    # 1. Collect staged files and write manifest into staging_dir
-    staged_rel_paths = sorted(
-        str(p.relative_to(staging_dir)) for p in staging_dir.rglob("*") if p.is_file()
-    )
-    staged_dirs = sorted(p.name for p in staging_dir.iterdir() if p.is_dir())
-    manifest_data = {
-        "schema_version": "cfa-manifest-v1",
-        "layout": "multi" if is_multi_trial else "single",
-        "managed_files": staged_rel_paths + [MANIFEST_FILENAME],
-        "managed_dirs": staged_dirs,
-    }
-    manifest_file = staging_dir / MANIFEST_FILENAME
-    manifest_file.write_text(
-        json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    staged_rel_paths.append(MANIFEST_FILENAME)
-
-    # 2. Determine previous managed artifacts in out_dir from a verified manifest only
-    old_manifest_path = out_dir / MANIFEST_FILENAME
-    old_managed_files: Set[str] = set()
-    old_managed_dirs: Set[str] = set()
-    has_valid_old_manifest = False
-
-    if old_manifest_path.is_file():
-        try:
-            old_manifest = json.loads(old_manifest_path.read_text(encoding="utf-8"))
-            if (
-                isinstance(old_manifest, dict)
-                and old_manifest.get("schema_version") == "cfa-manifest-v1"
-            ):
-                raw_files = old_manifest.get("managed_files") or []
-                raw_dirs = old_manifest.get("managed_dirs") or []
-                if isinstance(raw_files, list) and isinstance(raw_dirs, list):
-                    for f in raw_files:
-                        if _is_safe_manifest_relpath(f, out_dir):
-                            old_managed_files.add(str(Path(f)))
-                    for d in raw_dirs:
-                        if _is_safe_manifest_relpath(d, out_dir):
-                            old_managed_dirs.add(str(Path(d)))
-                    has_valid_old_manifest = True
-        except Exception:
-            pass
-
-    # If no valid previous manifest exists, CFA assumes ownership of ZERO pre-existing files!
-    # Unmanaged files and directories (user notes, reports, data) are NEVER deleted.
-    if not has_valid_old_manifest:
-        old_managed_files = set()
-        old_managed_dirs = set()
-
-    # Managed files to remove (existed previously in manifest, not in new staged files)
-    files_to_remove = old_managed_files - set(staged_rel_paths)
-
-    # 3. Create transactional backup of all files in out_dir that will be deleted or overwritten
-    backup_dir = Path(tempfile.mkdtemp(prefix="cfa_tx_backup_"))
-    backed_up_items: Dict[str, Path] = {}
-    pre_publish_files = {str(p.relative_to(out_dir)) for p in out_dir.rglob("*") if p.is_file()}
-
-    try:
-        # Back up existing files that will be touched or deleted
-        files_to_backup = files_to_remove | {
-            rel_str for rel_str in staged_rel_paths if (out_dir / rel_str).is_file()
-        }
-        for rel_str in files_to_backup:
-            if not _is_safe_manifest_relpath(rel_str, out_dir):
-                continue
-            target = out_dir / rel_str
-            if target.is_file():
-                b_path = backup_dir / rel_str
-                b_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(target, b_path)
-                backed_up_items[rel_str] = b_path
-
-        # Step A: Atomically write and replace all staged files into out_dir
-        # By putting new files in place first, readers never see missing files before replacement
-        for rel_str in staged_rel_paths:
-            if not _is_safe_manifest_relpath(rel_str, out_dir):
-                continue
-            src = staging_dir / rel_str
-            dest = out_dir / rel_str
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            tmp_dest = dest.parent / f".{dest.name}.cfa_tmp_{os.getpid()}_{uuid.uuid4().hex[:8]}"
-            try:
-                shutil.copy2(src, tmp_dest)
-                os.replace(tmp_dest, dest)
-            except Exception:
-                if tmp_dest.is_file() or tmp_dest.is_symlink():
-                    try:
-                        tmp_dest.unlink()
-                    except OSError:
-                        pass
-                raise
-
-        # Step B: Delete stale managed files (now that new versions are fully in place)
-        for rel_str in files_to_remove:
-            if not _is_safe_manifest_relpath(rel_str, out_dir):
-                continue
-            target = out_dir / rel_str
-            if target.is_file() or target.is_symlink():
-                target.unlink()
-
-        # Step C: Clean old managed trial directories if empty
-        for d_name in old_managed_dirs - set(staged_dirs):
-            if not _is_safe_manifest_relpath(d_name, out_dir):
-                continue
-            d_path = out_dir / d_name
-            if d_path.is_dir():
-                try:
-                    d_path.rmdir()
-                except OSError:
-                    pass  # Keep if user files exist
-
-    except Exception as primary_exc:
-        # ROLLBACK: Best-effort restore of out_dir to exact pre-publish state
-        rollback_errors: List[Exception] = []
-        try:
-            current_files = {str(p.relative_to(out_dir)) for p in out_dir.rglob("*") if p.is_file()}
-            # 1. Remove newly created files
-            for newly_created in current_files - pre_publish_files:
-                try:
-                    p = out_dir / newly_created
-                    if p.is_file() or p.is_symlink():
-                        p.unlink()
-                except Exception as e:
-                    rollback_errors.append(e)
-
-            # 2. Restore all backed up files using atomic replace
-            for rel_str, b_path in backed_up_items.items():
-                dest = out_dir / rel_str
-                tmp_restore = (
-                    dest.parent / f".{dest.name}.restore_{os.getpid()}_{uuid.uuid4().hex[:8]}"
-                )
-                try:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(b_path, tmp_restore)
-                    os.replace(tmp_restore, dest)
-                except Exception as e:
-                    rollback_errors.append(e)
-                finally:
-                    if tmp_restore.is_file() or tmp_restore.is_symlink():
-                        try:
-                            tmp_restore.unlink()
-                        except OSError:
-                            pass
-
-            # 3. Clean any empty dirs created during failed attempt
-            for rel_str in staged_rel_paths:
-                parent = (out_dir / rel_str).parent
-                while parent != out_dir and parent.is_dir():
-                    try:
-                        parent.rmdir()
-                        parent = parent.parent
-                    except OSError:
-                        break
-        except Exception as e:
-            rollback_errors.append(e)
-
-        if rollback_errors:
-            print(
-                f"WARNING: Rollback encountered secondary I/O errors: {rollback_errors[0]}",
-                file=sys.stderr,
-            )
-        raise primary_exc
-    finally:
-        shutil.rmtree(backup_dir, ignore_errors=True)
+KNOWN_ROOT_ARTIFACTS = {
+    "job_summary.json",
+    "job_summary.md",
+    "job_summary.zh.md",
+    "job_summary.en.md",
+}
 
 
 def write_outputs(
@@ -735,6 +340,7 @@ def write_outputs(
     skill_md: Optional[str],
     cand_hyps: Optional[Dict[str, Any]] = None,
     fmt: str = "both",
+    lang: str = "bilingual",
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -756,14 +362,27 @@ def write_outputs(
 
     has_markdown = fmt in ("markdown", "both") and report_md is not None and analysis is not None
     if has_markdown:
-        planned_files.add("report.md")
-        planned_files.add("report.zh.md")
-        planned_files.add("report.en.md")
         sp = analysis.get("skill_prescription")
-        if skill_md and sp:
-            planned_files.add("skill-prescription.md")
-            planned_files.add("skill-prescription.zh.md")
-            planned_files.add("skill-prescription.en.md")
+        if lang == "zh":
+            planned_files.add("report.md")
+            planned_files.add("report.zh.md")
+            if skill_md and sp:
+                planned_files.add("skill-prescription.md")
+                planned_files.add("skill-prescription.zh.md")
+        elif lang == "en":
+            planned_files.add("report.md")
+            planned_files.add("report.en.md")
+            if skill_md and sp:
+                planned_files.add("skill-prescription.md")
+                planned_files.add("skill-prescription.en.md")
+        else:  # bilingual
+            planned_files.add("report.md")
+            planned_files.add("report.zh.md")
+            planned_files.add("report.en.md")
+            if skill_md and sp:
+                planned_files.add("skill-prescription.md")
+                planned_files.add("skill-prescription.zh.md")
+                planned_files.add("skill-prescription.en.md")
 
     # 2. Lifecycle cleanup: purge stale known trial artifacts from prior runs
     for stale_file in KNOWN_TRIAL_ARTIFACTS - planned_files:
@@ -785,27 +404,46 @@ def write_outputs(
             json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8"
         )
     if has_markdown and analysis is not None:
-        (out_dir / "report.md").write_text(
-            render_report_markdown(evidence, analysis, lang="bilingual", output_format=fmt),
-            encoding="utf-8",
-        )
-        (out_dir / "report.zh.md").write_text(
-            render_report_markdown(evidence, analysis, lang="zh", output_format=fmt),
-            encoding="utf-8",
-        )
-        (out_dir / "report.en.md").write_text(
-            render_report_markdown(evidence, analysis, lang="en", output_format=fmt),
-            encoding="utf-8",
-        )
         sp = analysis.get("skill_prescription")
-        if skill_md and sp:
-            (out_dir / "skill-prescription.md").write_text(skill_md, encoding="utf-8")
-            (out_dir / "skill-prescription.zh.md").write_text(
-                render_skill_prescription_markdown(sp, lang="zh"), encoding="utf-8"
+        if lang == "zh":
+            zh_report = render_report_markdown(evidence, analysis, lang="zh", output_format=fmt)
+            (out_dir / "report.md").write_text(zh_report, encoding="utf-8")
+            (out_dir / "report.zh.md").write_text(zh_report, encoding="utf-8")
+            if skill_md and sp:
+                zh_skill = render_skill_prescription_markdown(sp, lang="zh")
+                (out_dir / "skill-prescription.md").write_text(zh_skill, encoding="utf-8")
+                (out_dir / "skill-prescription.zh.md").write_text(zh_skill, encoding="utf-8")
+        elif lang == "en":
+            en_report = render_report_markdown(evidence, analysis, lang="en", output_format=fmt)
+            (out_dir / "report.md").write_text(en_report, encoding="utf-8")
+            (out_dir / "report.en.md").write_text(en_report, encoding="utf-8")
+            if skill_md and sp:
+                en_skill = render_skill_prescription_markdown(sp, lang="en")
+                (out_dir / "skill-prescription.md").write_text(en_skill, encoding="utf-8")
+                (out_dir / "skill-prescription.en.md").write_text(en_skill, encoding="utf-8")
+        else:  # bilingual
+            (out_dir / "report.md").write_text(
+                render_report_markdown(evidence, analysis, lang="bilingual", output_format=fmt),
+                encoding="utf-8",
             )
-            (out_dir / "skill-prescription.en.md").write_text(
-                render_skill_prescription_markdown(sp, lang="en"), encoding="utf-8"
+            (out_dir / "report.zh.md").write_text(
+                render_report_markdown(evidence, analysis, lang="zh", output_format=fmt),
+                encoding="utf-8",
             )
+            (out_dir / "report.en.md").write_text(
+                render_report_markdown(evidence, analysis, lang="en", output_format=fmt),
+                encoding="utf-8",
+            )
+            if skill_md and sp:
+                (out_dir / "skill-prescription.md").write_text(
+                    render_skill_prescription_markdown(sp, lang="bilingual"), encoding="utf-8"
+                )
+                (out_dir / "skill-prescription.zh.md").write_text(
+                    render_skill_prescription_markdown(sp, lang="zh"), encoding="utf-8"
+                )
+                (out_dir / "skill-prescription.en.md").write_text(
+                    render_skill_prescription_markdown(sp, lang="en"), encoding="utf-8"
+                )
 
 
 def compute_batch_statistics(summary_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -888,6 +526,12 @@ def main() -> None:
         choices=["json", "markdown", "both"],
         default="both",
         help="Output format (default: both)",
+    )
+    parser.add_argument(
+        "--lang",
+        choices=["bilingual", "zh", "en"],
+        default="bilingual",
+        help="Report language edition (default: bilingual; options: bilingual, zh, en)",
     )
     args = parser.parse_args()
 
@@ -980,7 +624,7 @@ def main() -> None:
         planned_trial_names=planned_trial_names,
     )
 
-    _validate_output_writable(args.output)
+    validate_output_writable(args.output)
 
     staging_dir = Path(tempfile.mkdtemp(prefix="cfa_staging_"))
     try:
@@ -992,7 +636,14 @@ def main() -> None:
                 )
                 _report_diagnostics(ev)
                 write_outputs(
-                    staging_dir, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format
+                    staging_dir,
+                    ev,
+                    None,
+                    None,
+                    None,
+                    cand_hyps=cand_hyps,
+                    fmt=args.format,
+                    lang=args.lang,
                 )
             else:
                 ev, an, rep, skill_md = analyze_single_trial(
@@ -1000,10 +651,19 @@ def main() -> None:
                     job_dir=job_dir,
                     max_log_bytes=args.max_log_bytes,
                     replay_mode=args.replay,
+                    lang=args.lang,
                 )
                 _report_diagnostics(ev)
-                write_outputs(staging_dir, ev, an, rep, skill_md, fmt=args.format)
-            _publish_staging_to_output(staging_dir, args.output, is_multi_trial=False)
+                write_outputs(
+                    staging_dir,
+                    ev,
+                    an,
+                    rep,
+                    skill_md,
+                    fmt=args.format,
+                    lang=args.lang,
+                )
+            publish_staging_to_output(staging_dir, args.output, is_multi_trial=False)
         else:
             summary_rows = []
             for inv in trials:
@@ -1013,7 +673,16 @@ def main() -> None:
                         inv, job_dir=job_dir, max_log_bytes=args.max_log_bytes
                     )
                     _report_diagnostics(ev)
-                    write_outputs(t_out, ev, None, None, None, cand_hyps=cand_hyps, fmt=args.format)
+                    write_outputs(
+                        t_out,
+                        ev,
+                        None,
+                        None,
+                        None,
+                        cand_hyps=cand_hyps,
+                        fmt=args.format,
+                        lang=args.lang,
+                    )
                     summary_rows.append(
                         {
                             "trial_name": inv["trial_name"],
@@ -1029,9 +698,18 @@ def main() -> None:
                         job_dir=job_dir,
                         max_log_bytes=args.max_log_bytes,
                         replay_mode=args.replay,
+                        lang=args.lang,
                     )
                     _report_diagnostics(ev)
-                    write_outputs(t_out, ev, an, rep, skill_md, fmt=args.format)
+                    write_outputs(
+                        t_out,
+                        ev,
+                        an,
+                        rep,
+                        skill_md,
+                        fmt=args.format,
+                        lang=args.lang,
+                    )
                     summary_rows.append(
                         {
                             "trial_name": inv["trial_name"],
@@ -1046,19 +724,39 @@ def main() -> None:
                         }
                     )
             batch_stats = compute_batch_statistics(summary_rows)
-            (staging_dir / "job_summary.json").write_text(
-                json.dumps(
-                    {
-                        "job_dir": str(job_dir),
-                        "batch_statistics": batch_stats,
-                        "trials": summary_rows,
-                    },
-                    indent=2,
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
-            )
-            _publish_staging_to_output(staging_dir, args.output, is_multi_trial=True)
+            job_summary_data = {
+                "job_dir": str(job_dir),
+                "batch_statistics": batch_stats,
+                "trials": summary_rows,
+            }
+            if args.format in ("json", "both"):
+                (staging_dir / "job_summary.json").write_text(
+                    json.dumps(job_summary_data, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            if args.format in ("markdown", "both") and args.phase != "collect":
+                if args.lang == "zh":
+                    zh_summary = render_job_summary_markdown(job_summary_data, lang="zh")
+                    (staging_dir / "job_summary.md").write_text(zh_summary, encoding="utf-8")
+                    (staging_dir / "job_summary.zh.md").write_text(zh_summary, encoding="utf-8")
+                elif args.lang == "en":
+                    en_summary = render_job_summary_markdown(job_summary_data, lang="en")
+                    (staging_dir / "job_summary.md").write_text(en_summary, encoding="utf-8")
+                    (staging_dir / "job_summary.en.md").write_text(en_summary, encoding="utf-8")
+                else:  # bilingual
+                    (staging_dir / "job_summary.md").write_text(
+                        render_job_summary_markdown(job_summary_data, lang="bilingual"),
+                        encoding="utf-8",
+                    )
+                    (staging_dir / "job_summary.zh.md").write_text(
+                        render_job_summary_markdown(job_summary_data, lang="zh"),
+                        encoding="utf-8",
+                    )
+                    (staging_dir / "job_summary.en.md").write_text(
+                        render_job_summary_markdown(job_summary_data, lang="en"),
+                        encoding="utf-8",
+                    )
+            publish_staging_to_output(staging_dir, args.output, is_multi_trial=True)
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
 

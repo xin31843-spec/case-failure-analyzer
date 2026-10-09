@@ -3,8 +3,10 @@ RUFF ?= $(shell command -v ruff 2>/dev/null || (command -v uv >/dev/null 2>&1 &&
 FIXTURE_JOB := tests/fixtures/regressions/mixed-job-success-trial/job
 DEV_OUT := failure-analysis/dev
 SHARED_DOCS := attribution-protocol.md evidence-schema.md report-schema.md skill-prescription-policy.md taxonomy.md
+CODEX_HOME ?= $(HOME)/.codex
+DEST ?= $(CODEX_HOME)/skills/case-failure-analyzer
 
-.PHONY: help test test-pytest test-one compile smoke dev dev-min clean lint lint-fix format format-check check-docs check
+.PHONY: help test test-pytest test-one compile smoke dev dev-min clean lint lint-fix format format-check check-docs check export-skill
 
 help: ## List available targets
 	@grep -E '^[a-z][a-z-]*:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -82,6 +84,10 @@ smoke: ## End-to-end CLI run against the committed 2-trial fixture
 	$(PYTHON) scripts/analyze_case.py --job $(FIXTURE_JOB) --output $(DEV_OUT)
 	@echo "--- job_summary.json ---"
 	@cat $(DEV_OUT)/job_summary.json
+
+export-skill: ## Export clean production skill (SKILL.md, agents, scripts, references) to DEST
+	@if [ -z "$(DEST)" ]; then echo "ERROR: DEST must be specified." >&2; exit 1; fi
+	$(PYTHON) scripts/export_skill.py --dest "$(DEST)"
 
 dev: ## Install dev extras (pytest, ruff) into the active interpreter
 	$(PYTHON) -m pip install -e ".[dev]"
